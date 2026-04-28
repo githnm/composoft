@@ -134,13 +134,17 @@ export default nextConfig;
 }
 
 function tailwindConfig(): string {
+  // The registry's source path is hardcoded for now. Block components live in
+  // @composoft/registry-acme; Tailwind needs to see their .tsx so utility
+  // classes in className attributes survive the bundle. Generalize later by
+  // having registry packages publish a `tailwindContent` path.
   return `import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: [
     "./app/**/*.{ts,tsx}",
     "./lib/**/*.{ts,tsx}",
-    "../../packages/registry-acme/dist/**/*.{js,jsx}",
+    "../../registry-acme/src/**/*.{ts,tsx}",
   ],
   theme: { extend: {} },
   plugins: [],

@@ -34,7 +34,7 @@ export const composition: Composition = {
             "sortBy": "priority"
           },
           "layout": {
-            "region": "main"
+            "region": "sidebar"
           }
         }
       ]
@@ -44,7 +44,7 @@ export const composition: Composition = {
       "blocks": [
         {
           "id": "support.conversation-view",
-          "instanceId": "ticket-thread",
+          "instanceId": "ticket-conversation",
           "config": {
             "showSystemMessages": true,
             "groupByDay": true
@@ -55,28 +55,28 @@ export const composition: Composition = {
         },
         {
           "id": "support.agent-handoff-panel",
-          "instanceId": "handoff",
+          "instanceId": "handoff-panel",
           "config": {
             "showSeniorQueueOnly": false,
             "agents": [
               {
                 "id": "agent-1",
-                "name": "Alex Chen",
+                "name": "Alex Junior",
                 "isSenior": false
               },
               {
                 "id": "agent-2",
-                "name": "Jordan Patel",
+                "name": "Bailey Mid",
                 "isSenior": false
               },
               {
-                "id": "agent-senior-1",
-                "name": "Morgan Reyes",
+                "id": "agent-3",
+                "name": "Casey Senior",
                 "isSenior": true
               },
               {
-                "id": "agent-senior-2",
-                "name": "Sam Okafor",
+                "id": "agent-4",
+                "name": "Dana Senior",
                 "isSenior": true
               }
             ]
