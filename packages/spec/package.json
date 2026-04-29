@@ -1,7 +1,24 @@
 {
   "name": "@composoft/spec",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0-alpha.0",
+  "description": "Manifest contract for composoft: Adapter, Workflow, Block primitives plus Zod-backed validators. Zero runtime dependencies on React or Next.",
+  "license": "MIT",
+  "author": "Hoshang Mehta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/githnm/composoft.git",
+    "directory": "packages/spec"
+  },
+  "homepage": "https://github.com/githnm/composoft#readme",
+  "bugs": {
+    "url": "https://github.com/githnm/composoft/issues"
+  },
+  "keywords": [
+    "composoft",
+    "spec",
+    "manifests",
+    "framework"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,7 +31,8 @@
   },
   "files": [
     "dist",
-    "src/README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -32,5 +50,8 @@
     "@types/react": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

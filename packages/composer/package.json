@@ -1,7 +1,25 @@
 {
   "name": "@composoft/composer",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0-alpha.0",
+  "description": "CLI that turns a customer brief and a registry into a Composition and a working Next.js 15 app. Calls Claude to produce the composition; validates against the registry; generates code.",
+  "license": "MIT",
+  "author": "Hoshang Mehta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/githnm/composoft.git",
+    "directory": "packages/composer"
+  },
+  "homepage": "https://github.com/githnm/composoft#readme",
+  "bugs": {
+    "url": "https://github.com/githnm/composoft/issues"
+  },
+  "keywords": [
+    "composoft",
+    "composer",
+    "cli",
+    "ai",
+    "claude"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,23 +35,28 @@
   },
   "files": [
     "dist",
-    "fixtures"
+    "fixtures",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "compose:brand-x": "node dist/cli.js compose --brief fixtures/brand-x.md --registry @composoft/registry-acme --out ../examples/brand-x"
+    "compose:brewline": "node dist/cli.js compose --brief fixtures/brewline.md --registry @composoft/registry-example-postgres --out ../examples/brewline"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
-    "@composoft/registry-acme": "workspace:*",
     "@composoft/runtime": "workspace:*",
     "@composoft/spec": "workspace:*",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.0"
   },
   "devDependencies": {
+    "@composoft/registry-example-postgres": "workspace:*",
     "@types/node": "^20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

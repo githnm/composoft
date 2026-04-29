@@ -7,9 +7,13 @@ import { callComposer, resolveModel } from "./claude.js";
 import { generateNextApp } from "./generate.js";
 import { summarizeRegistry } from "./registry-summary.js";
 import {
+  findPageStateWriterGaps,
   formatIssue,
+  formatReferenceWarning,
+  formatWarning,
   validateCompositionAgainstRegistry,
   validateContextPaths,
+  validateReferenceIds,
 } from "./validate.js";
 
 type Args = {
@@ -51,7 +55,7 @@ function printUsage(): void {
       "Usage: composoft compose --brief <path> --registry <package> --out <path>",
       "",
       "  --brief    path to a markdown brief",
-      "  --registry name of an installed registry package (e.g. @composoft/registry-acme)",
+      "  --registry name of an installed registry package (e.g. @composoft/registry-example-postgres)",
       "  --out      directory to write the generated Next.js app into",
       "",
       "Env:",
@@ -79,13 +83,20 @@ async function compose(args: Args): Promise<void> {
   );
   console.error(`-> model: ${resolveModel()}`);
 
-  const summary = summarizeRegistry(registry);
+  const summary = await summarizeRegistry(registry);
 
   console.error(`-> calling composer...`);
   const response = await callComposer(brief, summary);
 
   console.error(`-> validating composition shape`);
   const composition = validateComposition(response.composition);
+
+  // Dump the model-emitted artifacts before validation so failures still
+  // surface them — useful for iterating the prompt and validators.
+  console.error(`-> contextSchemaJson:`);
+  console.error(JSON.stringify(response.contextSchemaJson, null, 2));
+  console.error(`-> contextSchemaTs:`);
+  console.error(response.contextSchemaTs);
 
   console.error(`-> validating composition against registry`);
   const registryIssues = validateCompositionAgainstRegistry(composition, registry);
@@ -102,8 +113,24 @@ async function compose(args: Args): Promise<void> {
     process.exit(1);
   }
 
-  console.error(`-> contextSchemaJson:`);
-  console.error(JSON.stringify(response.contextSchemaJson, null, 2));
+  console.error(`-> checking page-state reads have a writer on the same page`);
+  const warnings = findPageStateWriterGaps(composition, registry);
+  if (warnings.length > 0) {
+    console.error(
+      `-> ${warnings.length} page-state warning${warnings.length === 1 ? "" : "s"} (informational; not fatal):`,
+    );
+    for (const w of warnings) console.error(`  - ${formatWarning(w)}`);
+  }
+
+  console.error(`-> checking *Id config fields against registry referenceData`);
+  const refWarnings = validateReferenceIds(composition, summary.referenceData);
+  if (refWarnings.length > 0) {
+    console.error(
+      `-> ${refWarnings.length} reference-id warning${refWarnings.length === 1 ? "" : "s"} (informational; not fatal):`,
+    );
+    for (const w of refWarnings) console.error(`  - ${formatReferenceWarning(w)}`);
+  }
+
   console.error(`-> generating Next.js app at ${args.out}`);
   const result = await generateNextApp({
     outDir: args.out,

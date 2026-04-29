@@ -20,6 +20,14 @@ export type Composition = {
 
 export type CompositionPage = {
   readonly path: string;
+  /**
+   * Optional initial state for this page's shared client-side state. Must be
+   * JSON-serializable. Used for the first server render; client takes over
+   * after hydration. Any block that reads `from-page-state` paths without an
+   * initialState seed will see `undefined` on first render and the runtime
+   * will skip those slots (data slot returns null).
+   */
+  readonly initialState?: Record<string, unknown>;
   readonly blocks: ReadonlyArray<BlockInstance>;
 };
 
@@ -52,6 +60,7 @@ const pageSchema = z
       .string()
       .min(1)
       .regex(/^\//, "page path must start with '/'"),
+    initialState: z.record(z.string(), z.unknown()).optional(),
     blocks: z.array(blockInstanceSchema).min(1, "page must have at least one block"),
   })
   .strict();
@@ -73,6 +82,25 @@ export function validateComposition(value: unknown): Composition {
     throw new TypeError("composition must be an object");
   }
   const parsed = compositionJsonSchema.parse(value);
+
+  // initialState (if present) must round-trip JSON to confirm serializability.
+  // The composer emits compositions as TS literals that get imported by the
+  // runtime, but page state crosses the RSC boundary as a prop and gets
+  // serialized for hydration — non-JSON values (functions, symbols, etc.)
+  // would silently break.
+  for (const page of parsed.pages) {
+    if (!page.initialState) continue;
+    try {
+      const round = JSON.parse(JSON.stringify(page.initialState));
+      if (JSON.stringify(round) !== JSON.stringify(page.initialState)) {
+        throw new Error("round-trip mismatch");
+      }
+    } catch (e) {
+      throw new Error(
+        `composition page ${page.path}: initialState must be JSON-serializable (${(e as Error).message})`,
+      );
+    }
+  }
 
   // instanceIds are globally unique across the composition. The action
   // route handler looks blocks up by instanceId alone, so cross-page

@@ -3,22 +3,42 @@ import type { AnyBlock, Registry } from "./registry.js";
 import { PathResolutionError, readPath } from "./path.js";
 
 /**
- * Resolve a single ParamSource against the runtime context and per-customer
- * config. Wraps path errors with the slot/param they came from so the
- * stacktrace points at the actual offending line of the manifest.
+ * Resolve a single ParamSource against config, context, and page state.
+ *
+ * Missing `from-config`, `from-context`, or `from-page-state` paths resolve
+ * to `undefined` rather than throwing. The adapter's (or workflow's) Zod
+ * schema is the source of truth on whether a param is required: optional
+ * params accept undefined; required params raise a clear schema error at
+ * the parse boundary. This pushes correctness to the schema layer where it
+ * belongs.
+ *
+ * `static` values pass through unchanged, including `undefined` if a
+ * manifest explicitly sets it.
  */
 export function resolveParamSource(
   source: ParamSource,
   ctx: unknown,
   config: unknown,
+  pageState: unknown = {},
 ): unknown {
   switch (source.kind) {
     case "static":
       return source.value;
     case "from-config":
-      return readPath(config, source.path);
+      return tryReadPath(config, source.path);
     case "from-context":
-      return readPath(ctx, source.path);
+      return tryReadPath(ctx, source.path);
+    case "from-page-state":
+      return tryReadPath(pageState, source.path);
+  }
+}
+
+function tryReadPath(obj: unknown, path: string): unknown {
+  try {
+    return readPath(obj, path);
+  } catch (e) {
+    if (e instanceof PathResolutionError) return undefined;
+    throw e;
   }
 }
 
@@ -27,14 +47,18 @@ export function resolveParamSource(
  * ParamSources, validate against the adapter's `params` schema, run the
  * adapter, validate the output against the adapter's `output` schema.
  *
- * Returns a record keyed by slot name. Throws on any miss — the runtime
- * does not silently substitute undefined.
+ * Auto-skip semantics: if a slot has any `from-page-state` param that
+ * resolves to `undefined`, the slot is **skipped** — the adapter is not
+ * called and `data[slotName]` is set to `null`. Components reading from
+ * page state must declare `Data = { item: T | null }` and render a
+ * placeholder for null. See spec README "Slots that resolve to null".
  */
 export async function resolveDataSlots(
   block: AnyBlock,
   registry: Pick<Registry, "adapters">,
   ctx: unknown,
   config: unknown,
+  pageState: unknown = {},
 ): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {};
   for (const [slotName, slot] of Object.entries(block.data)) {
@@ -46,17 +70,19 @@ export async function resolveDataSlots(
     }
 
     const params: Record<string, unknown> = {};
+    let skipDueToMissingPageState = false;
     for (const [paramName, source] of Object.entries(slot.params)) {
-      try {
-        params[paramName] = resolveParamSource(source, ctx, config);
-      } catch (e) {
-        if (e instanceof PathResolutionError) {
-          throw new PathResolutionError(
-            `block ${block.id} slot "${slotName}" param "${paramName}": ${e.message}`,
-          );
-        }
-        throw e;
+      const value = resolveParamSource(source, ctx, config, pageState);
+      if (source.kind === "from-page-state" && value === undefined) {
+        skipDueToMissingPageState = true;
+        break;
       }
+      params[paramName] = value;
+    }
+
+    if (skipDueToMissingPageState) {
+      out[slotName] = null;
+      continue;
     }
 
     const validatedParams = adapter.params.parse(params);
@@ -64,6 +90,45 @@ export async function resolveDataSlots(
     out[slotName] = adapter.output.parse(result);
   }
   return out;
+}
+
+/**
+ * Resolve a single named slot. Used by the action endpoint's sibling
+ * `/api/composoft/resolve` route to re-fetch one slot when page state
+ * changes — avoids the full `resolveDataSlots` walk when only one slot
+ * needs to refresh.
+ */
+export async function resolveOneSlot(
+  block: AnyBlock,
+  slotName: string,
+  registry: Pick<Registry, "adapters">,
+  ctx: unknown,
+  config: unknown,
+  pageState: unknown = {},
+): Promise<unknown> {
+  const slot = block.data[slotName];
+  if (!slot) {
+    throw new Error(`block ${block.id}: no slot named "${slotName}"`);
+  }
+  const adapter = registry.adapters[slot.adapter];
+  if (!adapter) {
+    throw new Error(
+      `block ${block.id}: data slot "${slotName}" references unknown adapter "${slot.adapter}"`,
+    );
+  }
+
+  const params: Record<string, unknown> = {};
+  for (const [paramName, source] of Object.entries(slot.params)) {
+    const value = resolveParamSource(source, ctx, config, pageState);
+    if (source.kind === "from-page-state" && value === undefined) {
+      return null; // same auto-skip as resolveDataSlots
+    }
+    params[paramName] = value;
+  }
+
+  const validatedParams = adapter.params.parse(params);
+  const result = await adapter.run(validatedParams);
+  return adapter.output.parse(result);
 }
 
 /**
@@ -75,16 +140,16 @@ export async function resolveDataSlots(
  *   3. Calls `run`.
  *   4. Validates the output against the workflow's `output` schema.
  *
- * The signature is `(callerInput: unknown) => Promise<unknown>` because the
- * generic `K` of `WorkflowActionWithPrefilled` is not visible at this site.
- * The component's prop type narrows the signature for callers; the runtime
- * accepts unknown and trusts Zod for correctness.
+ * `pageState` is accepted so action prefills can use `from-page-state` —
+ * a "delete selected" button can prefill `itemId` from `selection.itemId`
+ * without the component knowing about the selection mechanism.
  */
 export function bindActions(
   block: AnyBlock,
   registry: Pick<Registry, "workflows">,
   ctx: unknown,
   config: unknown,
+  pageState: unknown = {},
 ): Record<string, (callerInput?: unknown) => Promise<unknown>> {
   const bound: Record<string, (callerInput?: unknown) => Promise<unknown>> = {};
   for (const [actionName, ref] of Object.entries(block.actions)) {
@@ -99,16 +164,7 @@ export function bindActions(
       const prefilled: Record<string, unknown> = {};
       if (ref.params) {
         for (const [paramName, source] of Object.entries(ref.params)) {
-          try {
-            prefilled[paramName] = resolveParamSource(source, ctx, config);
-          } catch (e) {
-            if (e instanceof PathResolutionError) {
-              throw new PathResolutionError(
-                `block ${block.id} action "${actionName}" param "${paramName}": ${e.message}`,
-              );
-            }
-            throw e;
-          }
+          prefilled[paramName] = resolveParamSource(source, ctx, config, pageState);
         }
       }
 
@@ -119,7 +175,17 @@ export function bindActions(
 
       const merged = { ...callerObject, ...prefilled };
       const validatedInput = workflow.input.parse(merged);
-      const result = await workflow.run(validatedInput);
+
+      // Workflows receive context as the second arg (spec change). The ctx
+      // here is what the route handler passed in — already merged with the
+      // authenticated identity, then run through enrichContext. Workflows
+      // read ctx.user.id for audit log actor and tenancy filtering.
+      const wfContext =
+        ctx && typeof ctx === "object" && "user" in ctx
+          ? (ctx as { user: { id: string } } & Record<string, unknown>)
+          : { user: { id: "anonymous" } };
+
+      const result = await workflow.run(validatedInput, wfContext);
       return workflow.output.parse(result);
     };
   }

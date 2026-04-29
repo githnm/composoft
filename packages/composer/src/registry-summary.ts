@@ -1,4 +1,4 @@
-import type { Registry } from "@composoft/spec";
+import type { ReferenceData, Registry } from "@composoft/spec";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 /**
@@ -12,6 +12,26 @@ export type RegistrySummary = {
   adapters: AdapterSummary[];
   workflows: WorkflowSummary[];
   blocks: BlockSummary[];
+  /**
+   * Union of every `from-context` path used by any block's data slots or
+   * action prefills. Surfaced explicitly in the user prompt so the model
+   * emits a contextSchemaJson with these exact dotted paths.
+   */
+  requiredContextPaths: string[];
+  /**
+   * Union of every `from-page-state` path used by any block. Informational
+   * for the model — useful for understanding what cross-block coordination
+   * looks like in this registry.
+   */
+  pageStatePathsRead: string[];
+  pageStatePathsWritten: string[];
+  /**
+   * Real (id, label) pairs the registry uses, scoped by category. Populated
+   * by the registry's optional `referenceData()` function. Surfaced verbatim
+   * in the user prompt so the model emits configs with real ids instead of
+   * guessing from labels in the brief.
+   */
+  referenceData?: ReferenceData;
 };
 
 type AdapterSummary = {
@@ -35,9 +55,44 @@ type BlockSummary = {
   configSchema: unknown;
   data: Record<string, { adapter: string; paramKeys: string[] }>;
   actions: Record<string, { workflow: string; prefilledParamKeys: string[] }>;
+  writes: Record<string, { path: string }>;
 };
 
-export function summarizeRegistry(registry: Registry): RegistrySummary {
+export async function summarizeRegistry(registry: Registry): Promise<RegistrySummary> {
+  let referenceData: ReferenceData | undefined;
+  if (registry.referenceData) {
+    try {
+      referenceData = await registry.referenceData();
+    } catch (e) {
+      console.error(
+        `-> warning: registry.referenceData() threw — continuing without it. ${(e as Error).message}`,
+      );
+    }
+  }
+
+  const ctxPaths = new Set<string>();
+  const pageStateRead = new Set<string>();
+  const pageStateWritten = new Set<string>();
+
+  for (const b of Object.values(registry.blocks)) {
+    for (const slot of Object.values(b.data)) {
+      for (const source of Object.values(slot.params)) {
+        if (source.kind === "from-context") ctxPaths.add(source.path);
+        if (source.kind === "from-page-state") pageStateRead.add(source.path);
+      }
+    }
+    for (const action of Object.values(b.actions)) {
+      if (!action.params) continue;
+      for (const source of Object.values(action.params)) {
+        if (source.kind === "from-context") ctxPaths.add(source.path);
+        if (source.kind === "from-page-state") pageStateRead.add(source.path);
+      }
+    }
+    for (const w of Object.values(b.writes ?? {})) {
+      if (w.kind === "page-state") pageStateWritten.add(w.path);
+    }
+  }
+
   return {
     name: registry.name,
     version: registry.version,
@@ -76,6 +131,18 @@ export function summarizeRegistry(registry: Registry): RegistrySummary {
           },
         ]),
       ),
+      writes: b.writes
+        ? Object.fromEntries(
+            Object.entries(b.writes).map(([writeName, write]) => [
+              writeName,
+              { path: write.path },
+            ]),
+          )
+        : {},
     })),
+    requiredContextPaths: Array.from(ctxPaths).sort(),
+    pageStatePathsRead: Array.from(pageStateRead).sort(),
+    pageStatePathsWritten: Array.from(pageStateWritten).sort(),
+    referenceData,
   };
 }

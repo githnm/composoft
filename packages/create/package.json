@@ -1,0 +1,47 @@
+{
+  "name": "@composoft/create",
+  "version": "0.1.0-alpha.0",
+  "description": "Scaffold a new composoft registry. Run with `npx @composoft/create my-registry`.",
+  "license": "MIT",
+  "author": "Hoshang Mehta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/githnm/composoft.git",
+    "directory": "packages/create"
+  },
+  "homepage": "https://github.com/githnm/composoft#readme",
+  "bugs": {
+    "url": "https://github.com/githnm/composoft/issues"
+  },
+  "keywords": [
+    "composoft",
+    "scaffolder",
+    "create-app"
+  ],
+  "type": "module",
+  "main": "./dist/cli.js",
+  "bin": {
+    "composoft-create": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "template",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

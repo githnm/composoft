@@ -4,40 +4,21 @@ composoft is a framework for AI-native B2B companies to ship per-customer softwa
 
 ## Status
 
-Alpha. One reference registry. In-memory data. No auth, no permissions, no hosted runtime. Built to validate the spec, not for production.
+Alpha. One reference registry, Postgres-backed. No auth, no permissions, no hosted runtime. Built to validate the spec, not for production.
 
 ## What it does, in 30 seconds
 
-The brief at [packages/composer/fixtures/brand-x.md](packages/composer/fixtures/brand-x.md):
+The brief at [packages/composer/fixtures/brewline.md](packages/composer/fixtures/brewline.md):
 
-> Support dashboard for Brand X. Agents see open tickets with customer context on the side. One-click escalation to senior agents. Brand X tags VIP customers and we surface that prominently.
+> Operations dashboard for Brewline Coffee, a specialty roaster. Home page with low-stock alerts and a Roastery inventory table; a /purchase-orders list filtered to drafts with inline approve; a /purchase-orders/[poId] detail page with one-click approve and receive.
 
 The command:
 
 ```bash
-pnpm --filter @composoft/composer compose:brand-x
+pnpm --filter @composoft/composer compose:brewline
 ```
 
-What the composer wrote at `packages/examples/brand-x/app/tickets/[ticketId]/page.tsx`:
-
-```tsx
-// app/tickets/[ticketId]/page.tsx (generated)
-import { ComposoftRuntime } from "@composoft/runtime";
-import { registry } from "@/lib/registry";
-import { composition } from "@/lib/composition";
-import { buildContext } from "@/lib/context";
-
-export const dynamic = "force-dynamic";
-
-type Params = Record<string, string | string[] | undefined>;
-
-export default async function Page({ params }: { params: Promise<Params> }) {
-  const context = buildContext(await params);
-  return <ComposoftRuntime registry={registry} composition={composition} context={context} pagePath="/tickets/[ticketId]" />;
-}
-```
-
-The same run also wrote 13 other files: composition, context schema, route handler for actions, layout, registry import, and config. See [packages/examples/brand-x](packages/examples/brand-x) for the full output.
+The composer writes a Next.js 15 App Router project at `packages/examples/brewline` — the composition, context schema, action route handler, layout, tailwind config, page files for each route, and a `.env.example` listing required env vars (`DATABASE_URL`, `COMPOSOFT_PG_SSL`). A trimmed snippet of the generated code lives here once we've run it; the full output is at [packages/examples/brewline](packages/examples/brewline).
 
 ## Why this exists
 
@@ -63,7 +44,7 @@ Three layers. `@composoft/spec` at the bottom; everything else depends on it.
 @composoft/spec               manifest contract
         ▲                     types + Zod validators, zero runtime
         │
-        ├──── registry packages (e.g. @composoft/registry-acme)
+        ├──── registry packages (e.g. @composoft/registry-example-postgres)
         │       what an org publishes: their adapters,
         │       workflows, blocks, and an enrichContext hook
         │
@@ -77,7 +58,7 @@ Three layers. `@composoft/spec` at the bottom; everything else depends on it.
 
 The runtime never imports a registry; it accepts one as a prop and trusts the spec contract. The composer imports a registry by name (passed via `--registry`) so it can summarize the available primitives for the model.
 
-Each package's README has more: [spec](packages/spec/src/README.md), [composer](packages/composer/README.md), [registry-acme](packages/registry-acme/README.md), [runtime](packages/runtime/README.md).
+Each package's README has more: [spec](packages/spec/src/README.md), [composer](packages/composer/README.md), [registry-example-postgres](packages/registry-example-postgres/README.md), [runtime](packages/runtime/README.md).
 
 ## Quick start
 
@@ -90,15 +71,19 @@ pnpm install
 pnpm -r build
 
 export ANTHROPIC_API_KEY=...
+export DATABASE_URL=postgres://user:pass@host:port/dbname   # required by the registry
 
-pnpm --filter @composoft/composer compose:brand-x
+pnpm --filter @composoft/registry-example-postgres seed     # one-time fixture load
 
-cd packages/examples/brand-x
+pnpm --filter @composoft/composer compose:brewline
+
+cd packages/examples/brewline
+cp .env.example .env                                        # set DATABASE_URL again here
 pnpm install
 pnpm dev
 ```
 
-Open http://localhost:3000. The dashboard renders the open ticket list at `/` and the per-ticket detail (conversation thread, customer sidebar, agent handoff panel) at `/tickets/tk_001` or any other seeded ticket id.
+Open http://localhost:3000. The dashboard renders inventory alerts at `/`, drafts at `/purchase-orders`, and the per-PO detail (line items, vendor card, approve/receive) at `/purchase-orders/po_001` or any seeded PO id.
 
 The default model is `claude-opus-4-7`. Override with `COMPOSOFT_MODEL=claude-sonnet-4-6` or similar.
 

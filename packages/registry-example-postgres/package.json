@@ -1,0 +1,42 @@
+{
+  "name": "@composoft/registry-example-postgres",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "seed",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "seed": "tsx seed/seed.ts",
+    "test": "node dist/_test.js",
+    "smoke": "node dist/_smoke.js"
+  },
+  "dependencies": {
+    "@composoft/runtime": "workspace:*",
+    "@composoft/spec": "workspace:*",
+    "pg": "^8.13.0",
+    "react": "^19.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.11.0",
+    "@types/react": "^19.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

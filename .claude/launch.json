@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "brandx-support (Next.js)",
+      "name": "brewline-ops (Next.js)",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "brandx-support", "dev"],
+      "runtimeArgs": ["--filter", "brewline-ops", "dev"],
       "port": 3000
     }
   ]

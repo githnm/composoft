@@ -1,7 +1,24 @@
 {
   "name": "@composoft/runtime",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0-alpha.0",
+  "description": "Server runtime for composoft compositions: resolves data slots, binds actions, hosts page-state, gates auth. React Server Components + a 'use client' renderer.",
+  "license": "MIT",
+  "author": "Hoshang Mehta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/githnm/composoft.git",
+    "directory": "packages/runtime"
+  },
+  "homepage": "https://github.com/githnm/composoft#readme",
+  "bugs": {
+    "url": "https://github.com/githnm/composoft/issues"
+  },
+  "keywords": [
+    "composoft",
+    "runtime",
+    "react",
+    "nextjs"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,13 +31,14 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node dist/_test.js"
+    "test": "tsx src/_test.ts"
   },
   "dependencies": {
     "@composoft/spec": "workspace:*",
@@ -29,6 +47,10 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/react": "^19.0.0"
+    "@types/react": "^19.0.0",
+    "tsx": "^4.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

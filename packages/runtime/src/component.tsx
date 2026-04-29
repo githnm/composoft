@@ -4,6 +4,7 @@ import type { Composition } from "./composition.js";
 import type { AnyBlock, Registry } from "./registry.js";
 import { resolveDataSlots } from "./resolve.js";
 import { ComposoftBlockHost } from "./block-host.js";
+import { ComposoftPageStateProvider } from "./page-state-provider.js";
 
 type Props = {
   registry: Registry;
@@ -13,14 +14,18 @@ type Props = {
 };
 
 /**
- * Server component. Resolves each block instance's data on the server, then
- * delegates render and action wiring to a client host (`<ComposoftBlockHost>`).
+ * Server component. Resolves each block instance's data on the server using
+ * the page's `initialState` as the seed for any `from-page-state` paths,
+ * then delegates render and re-resolution to a client provider + host:
  *
- * The runtime intentionally does not build action closures here — passing
- * server-built closures across the RSC boundary requires Server Actions per
- * call, and that fights with the dynamic shape of action manifests. Instead
- * the host posts to a route handler the composer generates at
- * `/api/composoft/action`; that handler reuses `bindActions` server-side.
+ *   <ComposoftRuntime>                       (server, this fn)
+ *     <ComposoftPageStateProvider>           (client, holds shared state)
+ *       <ComposoftBlockHost ... />           (client, per block instance)
+ *
+ * The runtime intentionally does not build action closures here — closures
+ * across the RSC boundary fight with the dynamic shape of action
+ * manifests. Instead the host posts to route handlers the composer
+ * generates at `/api/composoft/action` and `/api/composoft/resolve`.
  */
 export async function ComposoftRuntime({
   registry,
@@ -36,6 +41,8 @@ export async function ComposoftRuntime({
   const effectiveContext = registry.enrichContext
     ? await registry.enrichContext(context, registry)
     : context;
+
+  const initialState = page.initialState ?? {};
 
   type Resolved = {
     instanceId: string;
@@ -56,7 +63,13 @@ export async function ComposoftRuntime({
     }
 
     const validatedConfig = block.config.parse(instance.config);
-    const data = await resolveDataSlots(block, registry, effectiveContext, validatedConfig);
+    const data = await resolveDataSlots(
+      block,
+      registry,
+      effectiveContext,
+      validatedConfig,
+      initialState,
+    );
 
     resolved.push({
       instanceId: instance.instanceId,
@@ -79,31 +92,40 @@ export async function ComposoftRuntime({
   }
 
   return (
-    <div className="composoft-page" data-page={pagePath}>
-      {regions.map(({ region, items }) => (
-        <div
-          key={region}
-          className={`composoft-region composoft-region-${region}`}
-          data-region={region}
-        >
-          {items.map(({ instanceId, block, data, config, actionNames }) => {
-            const Component = block.component as ComponentType<
-              BlockProps<unknown, Record<string, unknown>, Record<string, (input?: unknown) => Promise<unknown>>>
-            >;
-            return (
-              <ComposoftBlockHost
-                key={instanceId}
-                Component={Component}
-                data={data}
-                config={config}
-                context={effectiveContext}
-                blockInstanceId={instanceId}
-                actionNames={actionNames}
-              />
-            );
-          })}
-        </div>
-      ))}
-    </div>
+    <ComposoftPageStateProvider initialState={initialState}>
+      <div className="composoft-page" data-page={pagePath}>
+        {regions.map(({ region, items }) => (
+          <div
+            key={region}
+            className={`composoft-region composoft-region-${region}`}
+            data-region={region}
+          >
+            {items.map(({ instanceId, block, data, config, actionNames }) => {
+              const Component = block.component as ComponentType<
+                BlockProps<
+                  unknown,
+                  Record<string, unknown>,
+                  Record<string, (input?: unknown) => Promise<unknown>>,
+                  Record<string, (value: any) => void>
+                >
+              >;
+              return (
+                <ComposoftBlockHost
+                  key={instanceId}
+                  Component={Component}
+                  data={data}
+                  config={config}
+                  context={effectiveContext}
+                  blockInstanceId={instanceId}
+                  actionNames={actionNames}
+                  dataSlots={block.data as Record<string, { adapter: string; params: Record<string, { kind: "static" | "from-config" | "from-context" | "from-page-state"; path?: string; value?: unknown }> }>}
+                  writesManifest={block.writes as Record<string, { kind: "page-state"; path: string }> | undefined}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </ComposoftPageStateProvider>
   );
 }

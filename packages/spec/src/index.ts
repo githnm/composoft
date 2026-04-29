@@ -16,6 +16,7 @@ export {
   type WorkflowAction,
   type WorkflowActionWithPrefilled,
   type WorkflowConfig,
+  type WorkflowContext,
   type WorkflowInput,
   type WorkflowOutput,
 } from "./workflow.js";
@@ -29,6 +30,8 @@ export {
   type BlockConfig,
   type BlockProps,
   type DataSlot,
+  type PageStateWrite,
+  type PageStateWriter,
   type ParamSource,
 } from "./block.js";
 
@@ -39,4 +42,14 @@ export {
   type ManifestMetadata,
 } from "./common.js";
 
-export type { EnrichContextFn, Registry } from "./registry.js";
+export type {
+  AuthRequest,
+  AuthenticateFn,
+  AuthorizeFn,
+  EnrichContextFn,
+  Identity,
+  ReferenceData,
+  ReferenceDataFn,
+  ReferenceItem,
+  Registry,
+} from "./registry.js";

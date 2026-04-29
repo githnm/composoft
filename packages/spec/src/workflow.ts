@@ -2,11 +2,27 @@ import { z } from "zod";
 import { isZodSchema, manifestMetadataSchema } from "./common.js";
 
 /**
+ * Per-request context every workflow's `run` receives as a second arg. The
+ * `user.id` field is authoritative — the runtime sets it from the
+ * authenticated identity, claims and route params can extend `user` with
+ * other fields. The index signature lets registries thread through whatever
+ * else they want without spec changes.
+ */
+export type WorkflowContext = {
+  user: { id: string };
+  [k: string]: unknown;
+};
+
+/**
  * A Workflow is a multi-step server-side action.
  *
  * `sideEffects` is human-readable documentation surfaced to the FDE during
  * composition ("sends email", "writes to db"). It is not enforced — treat it
  * as a label, not a sandbox.
+ *
+ * `run(input, context)` — context.user.id is the authenticated caller. Use
+ * it for audit log actor fields and tenant scoping. Workflows that don't
+ * need it can omit the parameter (TS allows narrower function signatures).
  */
 export type Workflow<TInput = unknown, TOutput = unknown> = {
   readonly id: string;
@@ -15,7 +31,7 @@ export type Workflow<TInput = unknown, TOutput = unknown> = {
   readonly input: z.ZodType<TInput>;
   readonly output: z.ZodType<TOutput>;
   readonly sideEffects?: readonly string[];
-  readonly run: (input: TInput) => Promise<TOutput>;
+  readonly run: (input: TInput, context: WorkflowContext) => Promise<TOutput>;
 };
 
 export type WorkflowConfig<TInput, TOutput> = Workflow<TInput, TOutput>;
@@ -79,7 +95,7 @@ export function defineWorkflow<
   input: I;
   output: O;
   sideEffects?: readonly string[];
-  run: (input: z.infer<I>) => Promise<z.infer<O>>;
+  run: (input: z.infer<I>, context: WorkflowContext) => Promise<z.infer<O>>;
 }): Workflow<z.infer<I>, z.infer<O>> {
   return config as Workflow<z.infer<I>, z.infer<O>>;
 }

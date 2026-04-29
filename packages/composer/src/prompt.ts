@@ -1,8 +1,36 @@
+import type { ReferenceData } from "@composoft/spec";
 import type { RegistrySummary } from "./registry-summary.js";
+
+const REFERENCE_TRUNCATE_LIMIT = 50;
+
+function formatReferenceDataSection(refData: ReferenceData): string {
+  const parts: string[] = ["## Reference data", ""];
+  parts.push(
+    "Use these EXACT id values in block configs. Do not invent new ids from labels in the brief — the labels are for humans, the ids are what the registry actually uses.",
+  );
+  parts.push("");
+  for (const [scope, items] of Object.entries(refData)) {
+    parts.push(`### ${scope}`);
+    parts.push("");
+    const visible = items.slice(0, REFERENCE_TRUNCATE_LIMIT);
+    for (const item of visible) {
+      parts.push(`- \`${item.id}\` — ${item.label}`);
+    }
+    if (items.length > REFERENCE_TRUNCATE_LIMIT) {
+      parts.push(`- *(first ${REFERENCE_TRUNCATE_LIMIT} of ${items.length})*`);
+    }
+    parts.push("");
+  }
+  return parts.join("\n");
+}
 
 export const SYSTEM_PROMPT = `You are the composer for composoft.
 
-composoft is a framework for AI-native B2B companies that ship per-customer software. It has three primitives:
+composoft is a framework for AI-native B2B companies that ship per-customer software.
+
+The user prompt may include a "Reference data" section listing real ids the registry uses (warehouse ids, vendor ids, category enum values, status enum values). When you write block configs, **use these exact ids verbatim**. Do not invent ids from human labels in the brief — a label like "Roastery warehouse" maps to a real id like \`wh_oakland\`, never to \`roastery\`. Hallucinated ids fail at runtime against the registry's database.
+
+It has three primitives:
 
 1. Adapter — a typed query against a data source. Has \`id\`, Zod schemas for \`params\` and \`output\`, and an implementation. You do not write adapters.
 2. Workflow — a server-side action with documented side effects. Has \`id\`, Zod schemas for \`input\` and \`output\`. You do not write workflows.
@@ -28,9 +56,18 @@ Each block instance in the JSON output uses **exactly these field names** — pi
 - \`config\` — the per-customer config object; must validate against the block's config schema.
 - \`layout.region\` — one of \`"main"\` or \`"sidebar"\`.
 
-Page object fields are exactly \`path\` (Next.js App Router pattern) and \`blocks\` (array of the above). **Do not add other fields like \`title\` or \`description\`** — unknown keys are rejected.
+Page object fields are: \`path\` (Next.js App Router pattern), \`blocks\` (array of the above), and an optional \`initialState\` (a JSON-serializable object seeding the page's shared client-side state — only include if the brief explicitly asks for a default selection or filter). **Do not add other fields like \`title\` or \`description\`** — unknown keys are rejected.
 
 Page paths follow Next.js App Router conventions: a path like "/tickets/[ticketId]" creates a dynamic segment and the runtime will populate the matching route param into context.
+
+**Page state — cross-block coordination**. Blocks on the same page can share client-side state (e.g. selecting a row in one block to filter another). Two halves:
+
+- A block can *write* to page state via a manifest \`writes\` declaration. Such blocks have writer methods exposed in their summary's \`writes\` field.
+- A block can *read* from page state by using a \`from-page-state\` ParamSource on its data slot params (already documented).
+
+When you place a block whose data slot uses \`from-page-state: "selection.itemId"\`, ensure another block on the same page writes to that path (look at the registry summary's \`writes\` field). Otherwise the slot will resolve to null on initial render and stay that way until something populates the path.
+
+Pages can carry an optional \`initialState\` object to seed the shared page state on first render. Use it when the user wants a page to start with a selected item, an open filter, etc. The shape is JSON-serializable and the runtime treats it as the initial value of page state. If unsure, omit it.
 
 You also write a TypeScript context module (\`contextSchemaTs\`) that:
 - Exports a Zod \`contextSchema\` describing the runtime context shape (what \`from-context\` paths in the registry's blocks expect — typically \`ticket.id\`, \`customer.id\`, \`user.id\`).
@@ -67,6 +104,7 @@ export function buildUserPrompt(brief: string, summary: RegistrySummary): string
           `  - config schema (JSON Schema): ${JSON.stringify(b.configSchema)}`,
           `  - data slots: ${JSON.stringify(b.data)}`,
           `  - actions: ${JSON.stringify(b.actions)}`,
+          `  - writes: ${JSON.stringify(b.writes)}`,
         ].join("\n"),
       )
       .join("\n\n"),
@@ -88,6 +126,29 @@ export function buildUserPrompt(brief: string, summary: RegistrySummary): string
         return `- **${w.id}** — ${w.description}${fx}\n  - input: ${JSON.stringify(w.inputSchema)}\n  - output: ${JSON.stringify(w.outputSchema)}`;
       })
       .join("\n\n"),
+    "",
+    summary.referenceData ? formatReferenceDataSection(summary.referenceData) : "",
+    "## Required context paths",
+    "",
+    "Your `contextSchemaTs` and `contextSchemaJson` MUST include each of these dotted paths verbatim. If a block uses `from-context: \"po.id\"`, your schema must have `po: { id: string }` — NOT `poId: string` and NOT `purchaseOrder: { id: string }`. Match the path exactly:",
+    "",
+    summary.requiredContextPaths.length === 0
+      ? "  (none — no blocks in this registry use from-context)"
+      : summary.requiredContextPaths.map((p) => `  - \`${p}\``).join("\n"),
+    "",
+    "## Page state paths",
+    "",
+    "Reads (some block's data slot or action prefill uses these):",
+    summary.pageStatePathsRead.length === 0
+      ? "  (none)"
+      : summary.pageStatePathsRead.map((p) => `  - \`${p}\``).join("\n"),
+    "",
+    "Writes (some block's manifest declares writing to these):",
+    summary.pageStatePathsWritten.length === 0
+      ? "  (none)"
+      : summary.pageStatePathsWritten.map((p) => `  - \`${p}\``).join("\n"),
+    "",
+    "When a page uses a block that reads a page-state path, that page must also include a block that writes to the same path (or seed it via the page's `initialState`). Otherwise the read resolves to null and stays that way.",
     "",
     "## Output",
     "",

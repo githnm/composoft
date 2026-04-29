@@ -2,6 +2,7 @@ export { PathResolutionError, readPath } from "./path.js";
 export {
   bindActions,
   resolveDataSlots,
+  resolveOneSlot,
   resolveParamSource,
 } from "./resolve.js";
 export {
@@ -12,5 +13,19 @@ export {
   type CompositionPage,
 } from "./composition.js";
 export type { EnrichContextFn, Registry } from "./registry.js";
+export {
+  authenticateRequest,
+  authorizeRequest,
+  mergeIdentityIntoContext,
+  _resetAuthWarningForTests,
+  type AuthenticateResult,
+  type AuthorizeResult,
+} from "./auth.js";
 export { ComposoftRuntime } from "./component.js";
 export { ComposoftBlockHost } from "./block-host.js";
+export {
+  ComposoftPageStateProvider,
+  usePageState,
+  usePageStateSnapshot,
+  usePageStateWriter,
+} from "./page-state-provider.js";
