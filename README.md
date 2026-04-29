@@ -1,115 +1,233 @@
 # composoft
 
-composoft is a framework for AI-native B2B companies to ship per-customer software. FDEs compose customer apps from a published library of blocks, adapters, and workflows. An AI composer turns a brief into a working Next.js app.
+Per-customer software for AI-native B2B companies, generated from a brief.
 
-## Status
+> Alpha. Real but rough. Things will change.
 
-Alpha. One reference registry, Postgres-backed. No auth, no permissions, no hosted runtime. Built to validate the spec, not for production.
+## What this is
 
-## What it does, in 30 seconds
+If you build B2B software, your customers want it tailored. Different layouts, different fields, different workflows. The way you solve this today is FDEs. Engineers who fork your main app per customer and hand-edit React for weeks.
 
-The brief at [packages/composer/fixtures/brewline.md](packages/composer/fixtures/brewline.md):
+composoft replaces hand-edits with composition. You define a typed library of blocks once. Customers get apps generated from natural-language briefs.
 
-> Operations dashboard for Brewline Coffee, a specialty roaster. Home page with low-stock alerts and a Roastery inventory table; a /purchase-orders list filtered to drafts with inline approve; a /purchase-orders/[poId] detail page with one-click approve and receive.
+The library compounds. The bottleneck moves from "FDE time per customer" to "registry expressiveness." A team of 10 can serve 200 customers instead of 30.
 
-The command:
+## A 30-second demo
 
-```bash
-pnpm --filter @composoft/composer compose:brewline
+A customer brief/prompt, in plain English:
+
+```
+Inventory dashboard for Brewline Coffee.
+
+Show KPI cards at top: total SKUs, items below reorder, open POs, total open spend.
+Below that, low-stock alerts grouped by vendor with one-click PO creation.
+Below that, full inventory table with adjust-stock action.
+Scope everything to the Oakland Roastery warehouse.
+
+Separate page for purchase orders, defaulting to draft status.
+PO detail page shows line items, vendor sidebar, approve and receive actions.
 ```
 
-The composer writes a Next.js 15 App Router project at `packages/examples/brewline` — the composition, context schema, action route handler, layout, tailwind config, page files for each route, and a `.env.example` listing required env vars (`DATABASE_URL`, `COMPOSOFT_PG_SSL`). A trimmed snippet of the generated code lives here once we've run it; the full output is at [packages/examples/brewline](packages/examples/brewline).
+One command:
 
-## Why this exists
+```bash
+npx @composoft/composer compose \
+  --brief brewline.md \
+  --registry @your-org/registry \
+  --out apps/brewline
+```
 
-FDEs at AI-native B2B companies hand-build customer-specific UIs against a shared backend. Real engineering — typed APIs, action wiring, layout, tenant config — but most of it is recombining patterns the company has shipped a dozen times.
+30 seconds later, a working Next.js app pointed at the customer's database.
 
-LLMs can read a structured library of UI primitives plus a customer brief and produce a coherent composition. Machine-readable manifests — declarative descriptions of what each primitive does, what data it needs, what config it accepts — collapse the model's job to picking pieces and writing valid configs, which it does well.
+Click an inventory row, sidebar updates with item details. Click adjust on a row, change a quantity, refresh, persisted. Click approve on a PO, audit log records the real user. No page reloads, no stale data.
 
-composoft is a framework for orgs to publish that library and for agents or humans to compose against it. Four packages: a spec for the contract, registry packages, a runtime for rendering, and a composer CLI.
+## Install and try it
 
-## The three primitives
+Scaffold a new registry:
 
-- **Adapter** — a typed query against a data source. Zod-validated params and output, plus an implementation function.
-- **Workflow** — a server-side action with declared side effects (e.g. "writes to db", "sends email"). Typed input and output via Zod.
-- **Block** — a React component plus its data needs (which adapters with what params) and its action surface (which workflows). Takes a per-customer config schema for FDE-time configuration.
+```bash
+npx @composoft/create@alpha my-registry
+cd my-registry
+pnpm install
+pnpm test
+```
 
-Full contract in [packages/spec/src/README.md](packages/spec/src/README.md).
+The scaffolder generates a working in-memory registry with one adapter, one workflow, one block. Modify it to fit your domain.
+
+To run the composer against your registry:
+
+```bash
+pnpm add -D @composoft/composer@alpha
+export ANTHROPIC_API_KEY=sk-ant-...
+npx @composoft/composer compose \
+  --brief brief.md \
+  --registry my-registry \
+  --out ../app
+```
+
+## The four primitives
+
+### Adapter
+
+A typed read. Takes params, returns rows. Wraps a database query, an API call, a calculation.
+
+```ts
+defineAdapter({
+  id: "deals.list",
+  params: z.object({ stage: z.string().optional() }),
+  output: z.array(dealSchema),
+  run: async ({ stage }) => db.deals.list({ stage }),
+});
+```
+
+### Workflow
+
+A typed write. Takes input, performs side effects, returns output.
+
+```ts
+defineWorkflow({
+  id: "deals.move-stage",
+  input: z.object({ dealId: z.string(), stage: z.string() }),
+  output: z.object({ dealId: z.string(), stage: z.string() }),
+  run: async ({ dealId, stage }, context) => {
+    await db.deals.update(dealId, { stage });
+    return { dealId, stage };
+  },
+});
+```
+
+### Block
+
+A React component plus its data needs and action surface. The unit of UI composition.
+
+```ts
+defineBlock({
+  id: "deals.pipeline",
+  config: z.object({ defaultStage: z.string() }),
+  data: {
+    deals: {
+      adapter: "deals.list",
+      params: { stage: { kind: "from-config", path: "defaultStage" } },
+    },
+  },
+  actions: {
+    moveStage: { workflow: "deals.move-stage" },
+  },
+  component: DealPipeline,
+});
+```
+
+### Registry
+
+A versioned collection of adapters, workflows, and blocks. Owned by your engineering team. Shipped as an npm package. Used by your composer to generate apps.
+
+## What's shipped
+
+- Three primitives (adapters, workflows, blocks) with typed manifests.
+- A composer CLI that turns briefs into Next.js apps using Claude.
+- A runtime that resolves data, binds actions, hosts page state.
+- Cross-block coordination via shared page state. Click in one block, another updates.
+- Auth hooks: registries declare `authenticate` and `authorize`, runtime enforces them on every action and resolve.
+- Reference data: registries publish their canonical ids so the composer doesn't hallucinate them.
+- A scaffolder for new registries.
+- A reference implementation against Postgres with real persistence and audit logging.
+
+## What's missing
+
+- Block-level permissions (today, all auth lives in the registry's `authorize` function).
+- Multi-region layouts beyond main + sidebar.
+- Hosted runtime (today, you deploy the generated app yourself).
+- Per-customer theming.
+- Starter registries for specific domains (CRM, ops, support, scheduling).
+- Migration assistant for porting existing components into a registry.
+- Typed page-state and context schemas.
+
+These are real gaps. Some matter more than others depending on what you're building. Open issues if you hit one.
 
 ## Architecture
 
-Three layers. `@composoft/spec` at the bottom; everything else depends on it.
+Four packages.
 
-```
-@composoft/spec               manifest contract
-        ▲                     types + Zod validators, zero runtime
-        │
-        ├──── registry packages (e.g. @composoft/registry-example-postgres)
-        │       what an org publishes: their adapters,
-        │       workflows, blocks, and an enrichContext hook
-        │
-        ├──── @composoft/runtime
-        │       consumes a registry + composition to render pages
-        │
-        └──── @composoft/composer
-                CLI: brief + registry → Composition + Next.js app
-                (calls Claude, validates, generates)
-```
+**`@composoft/spec`** — manifest types and validators. Defines what a block is, what an adapter is, what a workflow is. Zero runtime dependencies.
 
-The runtime never imports a registry; it accepts one as a prop and trusts the spec contract. The composer imports a registry by name (passed via `--registry`) so it can summarize the available primitives for the model.
+**`@composoft/runtime`** — resolves data slots, binds actions, manages page state, gates auth. React Server Components plus a client renderer.
 
-Each package's README has more: [spec](packages/spec/src/README.md), [composer](packages/composer/README.md), [registry-example-postgres](packages/registry-example-postgres/README.md), [runtime](packages/runtime/README.md).
+**`@composoft/composer`** — CLI that calls Claude. Reads your registry, reads a brief, writes a composition, generates a Next.js app.
 
-## Quick start
+**`@composoft/create`** — `npx @composoft/create my-registry` scaffolds a new registry.
 
-Prereqs: Node 20+, pnpm 9+.
+## Companies this could fit
 
-```bash
-git clone <repo-url> composoft
-cd composoft
-pnpm install
-pnpm -r build
+Concrete examples of the shape composoft is built for. Not every team here is using composoft. These are the kinds of companies whose engineering structure makes the framework worth considering.
 
-export ANTHROPIC_API_KEY=...
-export DATABASE_URL=postgres://user:pass@host:port/dbname   # required by the registry
+### AI-native CRM
 
-pnpm --filter @composoft/registry-example-postgres seed     # one-time fixture load
+A company building a CRM for AI-augmented sales teams. Their backend handles deals, contacts, activities, emails, AI-suggested next steps. Each enterprise customer wants their pipeline laid out differently. One sells to consumer brands, one sells to financial services, one runs round-robin across 200 reps.
 
-pnpm --filter @composoft/composer compose:brewline
+Today: 2 FDEs hand-build per-customer dashboards over 2-3 weeks each.
 
-cd packages/examples/brewline
-cp .env.example .env                                        # set DATABASE_URL again here
-pnpm install
-pnpm dev
-```
+With composoft: registry with blocks like `deal-pipeline`, `contact-list`, `activity-feed`, `email-composer`, `rep-leaderboard`. FDE writes a brief per customer, runs the composer, ships in a day.
 
-Open http://localhost:3000. The dashboard renders inventory alerts at `/`, drafts at `/purchase-orders`, and the per-PO detail (line items, vendor card, approve/receive) at `/purchase-orders/po_001` or any seeded PO id.
+### AI-native ERP for consumer brands
 
-The default model is `claude-opus-4-7`. Override with `COMPOSOFT_MODEL=claude-sonnet-4-6` or similar.
+A company replacing NetSuite for mid-market DTC brands. Backend covers inventory, purchase orders, vendors, finance, customer service. Every brand has their own warehouses, vendor relationships, ops processes.
 
-## What's missing / what's next
+Today: 3 FDEs configuring NetSuite-style admin panels per brand, plus engineers building custom dashboards for power-user customers.
 
-Real gaps, not polish items.
+With composoft: registry with blocks like `inventory-table`, `po-list`, `low-stock-alerts`, `vendor-sidebar`, `kpi-cards`. Each customer gets an ops dashboard tuned to their actual workflow.
 
-- **Registry distribution.** Registries link via `workspace:*` today. No npm publishing flow, no version pinning, no registry of registries.
-- **Type-level link between action params and `WorkflowActionWithPrefilled<T, K>`.** Authors keep `K` and the manifest's `params` keys in sync by hand. A future helper could derive `K` from `typeof block`.
-- **`from-context` paths are not type-checked** against the runtime context shape. The composer's path-existence check is value-level, against the model-emitted `contextSchemaJson`. A typed context contract would turn typos into compile errors.
-- **No auth, no permissions, no multi-tenant runtime.** The action endpoint accepts any caller. Real deployments need an auth boundary in front of the route handler and a permission check before binding actions.
-- **Composer prompt is naive.** Full registry dump per call, no retrieval. Fine for one-digit block counts, won't scale to a hundred.
-- **Layout regions hardcoded to `main` / `sidebar`.** The composer chooses between them but has no notion of a third region or nested layout.
-- **No cross-block coordination.** Two blocks on the same page can't subscribe to each other's actions or share local state. A "current selection" model is the obvious next thing.
-- **Single context shape per registry.** Multiple page-specific context shapes would need composer changes.
+### AI-native customer support
 
-If you want to pick one up, the spec change for any of these will need real justification — see below.
+A company building support tooling that drafts responses, surfaces context, escalates intelligently. Backend handles tickets, conversations, customer profiles, agent workload. Every customer's support org has different escalation rules, SLAs, channel mixes.
 
-## Contributing / philosophy
+Today: support customers get a configurable interface, but anything beyond a config toggle requires engineering work.
 
-- **The spec is the moat.** Adding a primitive or changing the shape of an existing one needs real justification. The runtime, the composer, and every registry package depend on the spec staying coherent.
-- **Output is real code, not a runtime.** The composer generates a Next.js project the FDE can read, edit, commit, and deploy. There's no hosted composoft service intercepting requests. If something is broken in the generated app, it's broken in code you can grep.
-- **Boring spec, clear contracts, no magic.** Zod schemas at every boundary. Validators that name the offending field. Errors that point at the manifest line. No "convention over configuration" surprises.
+With composoft: registry with blocks like `ticket-queue`, `conversation-view`, `agent-handoff-panel`, `customer-sidebar`, `escalation-rules-editor`. Each customer gets a support workspace that matches their org's actual structure.
 
-Issues and PRs welcome. If you're proposing a spec change, include the use case the spec doesn't cover and why a workaround in the registry or runtime layer isn't enough.
+### AI-native legal
+
+A company building drafting and research tools for law firms. Backend covers matters, documents, clauses, citations, AI-generated drafts. Every firm has different practice areas, document types, review workflows.
+
+Today: each firm needs a custom configuration of the platform, slow to ship and slow to update.
+
+With composoft: registry with blocks like `matter-list`, `document-viewer`, `clause-library`, `citation-checker`, `redline-panel`. Each firm's deployment is composed from the same library, tailored to their practice areas and review process.
+
+### AI-native dev tooling for enterprises
+
+A company selling AI coding assistants to enterprise engineering teams. Backend covers repos, prompts, telemetry, governance, code review. Every enterprise has different security requirements, language stacks, deployment models.
+
+Today: enterprise customers get the same UI, but enterprise IT wants surfaces tailored to their compliance posture.
+
+With composoft: registry with blocks like `usage-dashboard`, `governance-panel`, `repo-explorer`, `prompt-library`, `audit-log-view`. Each enterprise gets an admin and operations interface matching their controls.
+
+### AI-native ops/finance copilot
+
+A company building a copilot that automates ops work for back-office teams. Backend covers transactions, reconciliations, vendors, approvals. Every customer has different chart of accounts, approval chains, vendor mixes.
+
+Today: implementation consultants spend 4-6 weeks per customer wiring up their workflow.
+
+With composoft: registry with blocks like `transaction-table`, `reconciliation-queue`, `approval-inbox`, `vendor-explorer`, `financial-kpis`. Each customer's deployment composed from one library, tuned to their actual finance org.
+
+### What these companies share
+
+Three things, in order of importance.
+
+**FDE motion.** They have engineers whose entire job is configuring the software per customer. That motion is the bottleneck composoft works on.
+
+**Shared backend, varying UI.** All customers point at the same APIs, same data models, same workflows. The thing that varies meaningfully is the interface.
+
+**Customers that expect tailoring.** Their buyers don't want a generic interface. Tailoring is part of the product, not a nice-to-have.
+
+If your company has all three, composoft is worth a serious look. If you have one or two, the framework still helps but the ROI is smaller.
+
+If your company has none of these (Salesforce-shaped enterprise SaaS with admin panels, vertical SaaS shipping one product to all customers, internal tools at a non-software company), the framework is probably not the right tool. Other tools fit your shape better.
+
+## Status
+
+Alpha. The spec is at `0.1.0-alpha.0`. Things will change. Adopters should expect to update their registries when the spec evolves.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. Copyright Hoshang Mehta.
+
+Built by [@githnm](https://github.com/githnm). Issues and PRs welcome.
