@@ -1,6 +1,6 @@
 {
   "name": "@composoft/composer",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.3",
   "description": "CLI that turns a customer brief and a registry into a Composition and a working Next.js 15 app. Calls Claude to produce the composition; validates against the registry; generates code.",
   "license": "MIT",
   "author": "Hoshang Mehta",
@@ -36,6 +36,7 @@
   "files": [
     "dist",
     "fixtures",
+    "template",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -43,7 +44,10 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "compose:brewline": "node dist/cli.js compose --brief fixtures/brewline.md --registry @composoft/registry-example-postgres --out ../examples/brewline"
+    "shadcn:sync": "node scripts/sync-shadcn.js",
+    "compose:brewline": "node dist/cli.js compose --brief fixtures/brewline.md --registry @composoft/registry-example-postgres --customer Brewline --out ../examples/brewline",
+    "compose:northwind": "node dist/cli.js compose --brief fixtures/northwind.md --registry @composoft/registry-example-crm --customer Northwind --out ../examples/northwind",
+    "compose:acme": "node dist/cli.js compose --brief fixtures/acme.md --registry @composoft/registry-example-crm --customer Acme --out ../examples/acme"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
@@ -53,6 +57,7 @@
     "zod-to-json-schema": "^3.23.0"
   },
   "devDependencies": {
+    "@composoft/registry-example-crm": "workspace:*",
     "@composoft/registry-example-postgres": "workspace:*",
     "@types/node": "^20.0.0"
   },

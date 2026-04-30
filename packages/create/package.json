@@ -1,6 +1,6 @@
 {
   "name": "@composoft/create",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.3",
   "description": "Scaffold a new composoft registry. Run with `npx @composoft/create my-registry`.",
   "license": "MIT",
   "author": "Hoshang Mehta",

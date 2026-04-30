@@ -1,7 +1,35 @@
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative as pathRelative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ProductInfo } from "@composoft/spec";
 import type { Composition } from "@composoft/runtime";
+
+/**
+ * The shadcn snapshot lives at packages/composer/template/shadcn/, populated
+ * by `pnpm --filter @composoft/composer shadcn:sync`. We resolve it once
+ * per generate run.
+ */
+async function findShadcnTemplate(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  let dir = here;
+  for (;;) {
+    const candidate = join(dir, "package.json");
+    try {
+      const raw = await readFile(candidate, "utf8");
+      const pkg = JSON.parse(raw) as { name?: string };
+      if (pkg.name === "@composoft/composer") {
+        return join(dir, "template", "shadcn");
+      }
+    } catch {
+      // keep walking
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error("could not locate @composoft/composer template/shadcn directory");
+    }
+    dir = parent;
+  }
+}
 
 type GenerateInput = {
   outDir: string;
@@ -11,6 +39,15 @@ type GenerateInput = {
   registryDir: string;
   composition: Composition;
   contextSchemaTs: string;
+  /** Optional product/branding info from the registry. When present, the
+   * generated app gets full chrome (navbar, sidebar, page headers, card
+   * block backgrounds). When absent, the generator falls back to a bare
+   * layout — same shape as before product info was a thing. */
+  product?: ProductInfo;
+  /** Optional customer display name. Shown as a chip in the navbar so
+   * adopters can tell at a glance which customer instance they're looking
+   * at. Only meaningful when `product` is also set. */
+  customer?: string;
 };
 
 /**
@@ -37,10 +74,11 @@ type GenerateInput = {
  *     emitted the code.
  */
 export async function generateNextApp(input: GenerateInput): Promise<{ files: string[] }> {
-  const { outDir, registryPackageName, registryDir, composition, contextSchemaTs } = input;
+  const { outDir, registryPackageName, registryDir, composition, contextSchemaTs, product, customer } = input;
   const root = resolve(outDir);
   const registryRelative = posixify(pathRelative(root, registryDir));
   const composerVersion = await readComposerVersion();
+  const hasChrome = product !== undefined;
   const written: string[] = [];
 
   async function write(relative: string, content: string) {
@@ -50,32 +88,116 @@ export async function generateNextApp(input: GenerateInput): Promise<{ files: st
     written.push(relative);
   }
 
+  // Load the shadcn snapshot once; every chrome-on file consumes some
+  // slice of it (deps for package.json, theme for tailwind, vars for
+  // globals, the components/ui copy itself).
+  const shadcn = hasChrome ? await loadShadcnSnapshot() : null;
+
   await write(
     "package.json",
-    projectPackageJson(composition.name, registryPackageName, registryRelative, composerVersion),
+    projectPackageJson(
+      composition.name,
+      registryPackageName,
+      registryRelative,
+      composerVersion,
+      shadcn,
+    ),
   );
   await write("tsconfig.json", projectTsConfig());
   await write("next.config.mjs", nextConfig());
-  await write("tailwind.config.ts", tailwindConfig(registryRelative));
+  await write("tailwind.config.ts", tailwindConfig(registryRelative, shadcn));
   await write("postcss.config.mjs", postcssConfig());
   await write(".gitignore", gitignore());
   await write(".env.example", envExampleFile());
   await write("README.md", generatedReadme(composition.name, registryPackageName));
-  await write("app/layout.tsx", appLayout(composition.name));
-  await write("app/globals.css", globalsCss());
+  await write("app/layout.tsx", appLayout(composition.name, product, customer));
+  await write("app/globals.css", globalsCss(product, shadcn));
   await write("lib/registry.ts", registryRedirect(registryPackageName));
   await write("lib/context.ts", contextSchemaTs);
   await write("lib/composition.ts", compositionTs(composition));
 
+  if (hasChrome && shadcn !== null && product !== undefined) {
+    // Copy shadcn snapshot: ui/* → components/ui/*, hooks/* → hooks/*,
+    // lib/utils.ts → lib/utils.ts. Filenames preserved verbatim so
+    // adopters can run `npx shadcn add <component> --overwrite` later
+    // without surprises.
+    for (const file of shadcn.files) {
+      await write(file.dest, file.content);
+    }
+    await write("components/AppShell.tsx", appShellComponent());
+    await write("components/AppSidebar.tsx", appSidebarComponent(product, customer));
+    await write("components/AppNavbar.tsx", appNavbarComponent(product, customer));
+    await write("components/PageHeader.tsx", pageHeaderComponent());
+  }
+
   for (const page of composition.pages) {
     const segment = pagePathToSegment(page.path);
-    await write(`app${segment}/page.tsx`, pageFile(page.path));
+    await write(`app${segment}/page.tsx`, pageFile(page.path, hasChrome));
   }
 
   await write("app/api/composoft/action/route.ts", actionRouteFile());
   await write("app/api/composoft/resolve/route.ts", resolveRouteFile());
 
   return { files: written };
+}
+
+type ShadcnSnapshot = {
+  /** Vendored files: every entry's `dest` is where it lands in the generated app. */
+  files: Array<{ dest: string; content: string }>;
+  /** Merged tailwind theme.extend (base + per-component contributions). */
+  tailwindExtend: Record<string, unknown>;
+  /** CSS vars for `:root` (light) and `.dark` from the snapshot. */
+  cssVarsCss: string;
+  /** Names of npm dependencies the snapshot needs. */
+  npmDependencies: string[];
+};
+
+async function loadShadcnSnapshot(): Promise<ShadcnSnapshot> {
+  const root = await findShadcnTemplate();
+  const files: Array<{ dest: string; content: string }> = [];
+
+  // ui/*.tsx → components/ui/*.tsx (the shadcn convention adopters expect).
+  const uiDir = join(root, "ui");
+  for (const entry of await readdir(uiDir)) {
+    files.push({
+      dest: posixify(join("components", "ui", entry)),
+      content: await readFile(join(uiDir, entry), "utf8"),
+    });
+  }
+
+  // hooks/*.tsx → hooks/*.tsx (use-mobile and any future hooks shadcn ships).
+  const hooksDir = join(root, "hooks");
+  try {
+    for (const entry of await readdir(hooksDir)) {
+      files.push({
+        dest: posixify(join("hooks", entry)),
+        content: await readFile(join(hooksDir, entry), "utf8"),
+      });
+    }
+  } catch {
+    // Snapshot may not have hooks/ if no synced item contributes one.
+  }
+
+  // lib/utils.ts → lib/utils.ts (the cn() helper every component imports).
+  files.push({
+    dest: "lib/utils.ts",
+    content: await readFile(join(root, "lib", "utils.ts"), "utf8"),
+  });
+
+  const tailwindExtend = JSON.parse(
+    await readFile(join(root, "tailwind-extend.json"), "utf8"),
+  ) as Record<string, unknown>;
+  const cssVarsCss = await readFile(join(root, "globals.css"), "utf8");
+  const deps = JSON.parse(
+    await readFile(join(root, "dependencies.json"), "utf8"),
+  ) as { dependencies: string[] };
+
+  return {
+    files,
+    tailwindExtend,
+    cssVarsCss,
+    npmDependencies: deps.dependencies,
+  };
 }
 
 function posixify(p: string): string {
@@ -116,12 +238,94 @@ function pagePathToSegment(path: string): string {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
+/**
+ * Pin every shadcn-required npm package here. Centralizing means a single
+ * place to bump versions, and the generated package.json gets the same
+ * range across every adopter. Adopters who want newer versions can edit
+ * post-generate.
+ */
+const SHADCN_DEP_VERSIONS: Record<string, string> = {
+  "@hookform/resolvers": "^3.9.0",
+  "@radix-ui/react-accordion": "^1.2.0",
+  "@radix-ui/react-alert-dialog": "^1.1.1",
+  "@radix-ui/react-aspect-ratio": "^1.1.0",
+  "@radix-ui/react-avatar": "^1.1.0",
+  "@radix-ui/react-checkbox": "^1.1.1",
+  "@radix-ui/react-collapsible": "^1.1.0",
+  "@radix-ui/react-context-menu": "^2.2.1",
+  "@radix-ui/react-dialog": "^1.1.1",
+  "@radix-ui/react-dropdown-menu": "^2.1.1",
+  "@radix-ui/react-hover-card": "^1.1.1",
+  "@radix-ui/react-label": "^2.1.0",
+  "@radix-ui/react-menubar": "^1.1.1",
+  "@radix-ui/react-navigation-menu": "^1.2.0",
+  "@radix-ui/react-popover": "^1.1.1",
+  "@radix-ui/react-progress": "^1.1.0",
+  "@radix-ui/react-radio-group": "^1.2.0",
+  "@radix-ui/react-scroll-area": "^1.1.0",
+  "@radix-ui/react-select": "^2.1.1",
+  "@radix-ui/react-separator": "^1.1.0",
+  "@radix-ui/react-slider": "^1.2.0",
+  "@radix-ui/react-slot": "^1.1.0",
+  "@radix-ui/react-switch": "^1.1.0",
+  "@radix-ui/react-tabs": "^1.1.0",
+  "@radix-ui/react-toggle": "^1.1.0",
+  "@radix-ui/react-toggle-group": "^1.1.0",
+  "@radix-ui/react-tooltip": "^1.1.2",
+  "class-variance-authority": "^0.7.0",
+  clsx: "^2.1.1",
+  cmdk: "^1.0.0",
+  "date-fns": "^3.6.0",
+  "embla-carousel-react": "^8.3.0",
+  "input-otp": "^1.2.4",
+  "lucide-react": "^0.462.0",
+  "next-themes": "^0.3.0",
+  "react-day-picker": "^9.4.0",
+  "react-hook-form": "^7.53.0",
+  "react-resizable-panels": "^2.1.4",
+  recharts: "^2.12.7",
+  sonner: "^1.5.0",
+  "tailwind-merge": "^2.5.4",
+  "tailwindcss-animate": "^1.0.7",
+  "tw-animate-css": "^1.2.0",
+  vaul: "^1.1.2",
+  zod: "^3.23.8",
+};
+
 function projectPackageJson(
   name: string,
   registryPackageName: string,
   registryRelative: string,
   composerVersion: string,
+  shadcn: ShadcnSnapshot | null,
 ): string {
+  const dependencies: Record<string, string> = {
+    [registryPackageName]: `file:${registryRelative}`,
+    "@composoft/runtime": `^${composerVersion}`,
+    next: "^15.0.0",
+    react: "^19.0.0",
+    "react-dom": "^19.0.0",
+    tailwindcss: "^3.4.0",
+    autoprefixer: "^10.4.0",
+    postcss: "^8.4.0",
+    zod: "^3.23.8",
+  };
+  if (shadcn !== null) {
+    // Inject every shadcn-required dep at a known-good version. The list
+    // is the union of: every npm dep declared by every synced shadcn
+    // component, plus manual extras (tailwindcss-animate, recharts,
+    // tw-animate-css). The shadcn snapshot is the source of truth for
+    // names; SHADCN_DEP_VERSIONS holds the version pins.
+    for (const dep of shadcn.npmDependencies) {
+      const version = SHADCN_DEP_VERSIONS[dep];
+      if (!version) {
+        throw new Error(
+          `shadcn snapshot needs a version pin for "${dep}" — add it to SHADCN_DEP_VERSIONS in generate.ts`,
+        );
+      }
+      dependencies[dep] = version;
+    }
+  }
   return (
     JSON.stringify(
       {
@@ -134,17 +338,7 @@ function projectPackageJson(
           build: "next build",
           start: "next start",
         },
-        dependencies: {
-          [registryPackageName]: `file:${registryRelative}`,
-          "@composoft/runtime": `^${composerVersion}`,
-          next: "^15.0.0",
-          react: "^19.0.0",
-          "react-dom": "^19.0.0",
-          tailwindcss: "^3.4.0",
-          autoprefixer: "^10.4.0",
-          postcss: "^8.4.0",
-          zod: "^3.23.8",
-        },
+        dependencies,
         devDependencies: {
           "@types/node": "^20.0.0",
           "@types/react": "^19.0.0",
@@ -201,13 +395,14 @@ export default nextConfig;
 `;
 }
 
-function tailwindConfig(registryRelative: string): string {
+function tailwindConfig(registryRelative: string, shadcn: ShadcnSnapshot | null): string {
   // Block components live in the registry package; Tailwind needs to see
   // their .tsx so utility classes in className attributes survive the
   // bundle. The relative path is computed from the resolved registry
   // package directory so this works whether the registry is a sibling
   // workspace package, a local path dep, or installed from the registry.
-  return `import type { Config } from "tailwindcss";
+  if (shadcn === null) {
+    return `import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: [
@@ -217,6 +412,40 @@ const config: Config = {
   ],
   theme: { extend: {} },
   plugins: [],
+};
+export default config;
+`;
+  }
+  // shadcn path: emit darkMode: class, theme.extend pulled from the
+  // snapshot, and the animate plugin shadcn components depend on. The
+  // snapshot's theme extensions cover both the base init mappings
+  // (background/foreground/card/...) and per-component additions
+  // (sidebar.*, accordion keyframes, etc).
+  const extendLiteral = JSON.stringify(shadcn.tailwindExtend, null, 4)
+    .split("\n")
+    .map((line, i) => (i === 0 ? line : "  " + line))
+    .join("\n");
+  return `import type { Config } from "tailwindcss";
+import animate from "tailwindcss-animate";
+
+const config: Config = {
+  darkMode: ["class"],
+  content: [
+    "./app/**/*.{ts,tsx}",
+    "./components/**/*.{ts,tsx}",
+    "./lib/**/*.{ts,tsx}",
+    "./hooks/**/*.{ts,tsx}",
+    "${registryRelative}/src/**/*.{ts,tsx}",
+  ],
+  theme: {
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: { "2xl": "1400px" },
+    },
+    extend: ${extendLiteral},
+  },
+  plugins: [animate],
 };
 export default config;
 `;
@@ -306,8 +535,11 @@ This is real code. Edit anything you want; commit it. The composer is one-shot, 
 `;
 }
 
-function appLayout(appName: string): string {
-  return `import type { ReactNode } from "react";
+function appLayout(appName: string, product?: ProductInfo, customer?: string): string {
+  if (!product) {
+    // Bare layout. No shadcn, no chrome — registries that omit `product`
+    // get the same minimal output the composer emitted before chrome existed.
+    return `import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata = { title: ${JSON.stringify(appName)} };
@@ -322,13 +554,344 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   );
 }
 `;
+  }
+
+  // Chrome path: server-rendered <html>/<body> wraps a client AppShell that
+  // mounts SidebarProvider + Sidebar + Navbar from shadcn. <Toaster /> from
+  // sonner is mounted at the body level so any block can fire a toast via
+  // `toast(...)` from "sonner" without wiring a provider.
+  const browserTitle = customer ? `${customer} · ${product.name}` : product.name;
+  return `import type { ReactNode } from "react";
+import "./globals.css";
+import { AppShell } from "@/components/AppShell";
+import { Toaster } from "@/components/ui/sonner";
+
+export const metadata = { title: ${JSON.stringify(browserTitle)} };
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="min-h-screen bg-background text-foreground antialiased">
+        <AppShell>{children}</AppShell>
+        <Toaster />
+      </body>
+    </html>
+  );
+}
+`;
 }
 
-function globalsCss(): string {
-  return `@tailwind base;
+function appShellComponent(): string {
+  // Thin client wrapper that mounts shadcn's SidebarProvider. All chrome
+  // hangs off this — the sidebar, the top bar (rendered inside the
+  // SidebarInset so it sits to the right of the collapsible sidebar), and
+  // the page content padding.
+  return `"use client";
+
+import type { ReactNode } from "react";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/AppSidebar";
+import { AppNavbar } from "@/components/AppNavbar";
+
+export function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <AppNavbar />
+        <main className="flex-1 p-8">{children}</main>
+      </SidebarInset>
+    </SidebarProvider>
+  );
+}
+`;
+}
+
+function appSidebarComponent(product: ProductInfo, customer?: string): string {
+  // Uses shadcn's Sidebar compound (SidebarProvider lives in AppShell). Nav
+  // items resolve their lucide icons by name at render time so registries
+  // can declare arbitrary names without an icon registry. Unknown names
+  // render the Circle fallback rather than crashing.
+  const items = product.navigation ?? [];
+  const itemsJson = JSON.stringify(
+    items.map((i) => ({ label: i.label, path: i.path, icon: i.icon ?? "Circle" })),
+    null,
+    2,
+  );
+  const productName = JSON.stringify(product.name);
+  const customerLabel = customer ? JSON.stringify(customer) : "null";
+  return `"use client";
+
+import * as React from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import * as Icons from "lucide-react";
+import { Sparkles } from "lucide-react";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarSeparator,
+} from "@/components/ui/sidebar";
+
+const NAV_ITEMS = ${itemsJson} as const;
+const PRODUCT_NAME = ${productName};
+const CUSTOMER_LABEL: string | null = ${customerLabel};
+
+function NavIcon({ name }: { name: string }) {
+  const C = (Icons as Record<string, unknown>)[name] ?? Icons.Circle;
+  const Resolved = C as typeof Icons.Circle;
+  return <Resolved className="size-4" />;
+}
+
+export function AppSidebar() {
+  const pathname = usePathname();
+  return (
+    <Sidebar>
+      <SidebarHeader>
+        <div className="flex items-center gap-2 px-2 py-1.5">
+          <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <Sparkles className="size-4" />
+          </div>
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-semibold leading-tight">{PRODUCT_NAME}</span>
+            {CUSTOMER_LABEL ? (
+              <span className="truncate text-xs text-muted-foreground leading-tight">{CUSTOMER_LABEL}</span>
+            ) : null}
+          </div>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {NAV_ITEMS.map((item) => (
+                <SidebarMenuItem key={item.path}>
+                  <SidebarMenuButton asChild isActive={pathname === item.path}>
+                    <Link href={item.path}>
+                      <NavIcon name={item.icon} />
+                      <span>{item.label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarSeparator />
+        <SidebarGroup>
+          <SidebarGroupLabel>Recent</SidebarGroupLabel>
+          <SidebarGroupContent>
+            {/* Intentionally empty for now. The section header reserves the
+                space so future dynamic links land somewhere that already
+                exists in the chrome. */}
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
+  );
+}
+`;
+}
+
+function appNavbarComponent(product: ProductInfo, customer?: string): string {
+  // Top bar inside SidebarInset. Left: sidebar trigger + a Badge showing the
+  // product name (lightweight, doesn't compete with the sidebar header).
+  // Right: avatar + chevron, wrapped in a DropdownMenu so the placeholder
+  // menu items (Profile / Settings / Sign out) are real shadcn primitives
+  // adopters can wire to actual auth.
+  const displayName = customer ?? product.name;
+  const initial = displayName.charAt(0).toUpperCase();
+  const productName = JSON.stringify(product.name);
+  const displayLiteral = JSON.stringify(displayName);
+  const initialLiteral = JSON.stringify(initial);
+  return `"use client";
+
+import { ChevronDown, LogOut, Settings, User } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Separator } from "@/components/ui/separator";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+
+export function AppNavbar() {
+  return (
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-4">
+      <SidebarTrigger className="-ml-1" />
+      <Separator orientation="vertical" className="mr-2 h-4" />
+      <Badge variant="secondary" className="font-medium">
+        {${productName}}
+      </Badge>
+      <div className="ml-auto flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger className="flex items-center gap-2 rounded-md px-1 py-1 outline-none transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring">
+            <Avatar className="size-8">
+              <AvatarFallback className="bg-primary text-primary-foreground text-xs font-medium">
+                {${initialLiteral}}
+              </AvatarFallback>
+            </Avatar>
+            <ChevronDown className="size-4 text-muted-foreground" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel>{${displayLiteral}}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem>
+              <User className="mr-2 size-4" />
+              Profile
+            </DropdownMenuItem>
+            <DropdownMenuItem>
+              <Settings className="mr-2 size-4" />
+              Settings
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem>
+              <LogOut className="mr-2 size-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </header>
+  );
+}
+`;
+}
+
+function pageHeaderComponent(): string {
+  // No card wrapper — page header sits directly above the runtime regions.
+  // Serif title hits the Linear/Attio aesthetic the user asked for; subtitle
+  // uses muted-foreground so it inherits any theme tweaks.
+  return `import type { ReactElement } from "react";
+
+export function PageHeader({
+  title,
+  subtitle,
+}: {
+  title?: string;
+  subtitle?: string;
+}): ReactElement | null {
+  if (!title && !subtitle) return null;
+  return (
+    <div className="mb-8">
+      {title ? (
+        <h1
+          className="text-2xl font-semibold text-foreground"
+          style={{ fontFamily: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif" }}
+        >
+          {title}
+        </h1>
+      ) : null}
+      {subtitle ? (
+        <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+      ) : null}
+    </div>
+  );
+}
+`;
+}
+
+function globalsCss(product?: ProductInfo, shadcn?: ShadcnSnapshot | null): string {
+  if (!product || !shadcn) {
+    return `@tailwind base;
 @tailwind components;
 @tailwind utilities;
 `;
+  }
+  // shadcn path: emit the snapshot's globals.css verbatim (base CSS vars
+  // + per-component contributions) and append a registry-specific block
+  // that overrides --primary with the product accent and styles the
+  // runtime's region children as Card-styled containers via shadcn tokens.
+  const accentHsl = product.accentColor ? hexToHslComponents(product.accentColor) : null;
+  const accentOverride = accentHsl
+    ? `\n@layer base {\n  :root {\n    --primary: ${accentHsl};\n  }\n}\n`
+    : "";
+  const regionCardStyles = `
+@layer components {
+  /* Card treatment for every block instance the runtime renders. Main
+     blocks are roomier; sidebar blocks are more compact. Both use
+     shadcn Card tokens so they pick up the active theme. */
+  .composoft-page {
+    display: block;
+  }
+  .composoft-page:has(.composoft-region-sidebar) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 1.5rem;
+    align-items: start;
+  }
+  .composoft-region {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .composoft-region-main {
+    gap: 1.5rem;
+  }
+  .composoft-region-sidebar {
+    gap: 1rem;
+  }
+  .composoft-region > * {
+    background: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  }
+  .composoft-region-main > * {
+    padding: 1.5rem;
+  }
+  .composoft-region-sidebar > * {
+    padding: 1.25rem;
+  }
+}
+`;
+  return shadcn.cssVarsCss + accentOverride + regionCardStyles;
+}
+
+/**
+ * Convert "#rrggbb" or "#rgb" to shadcn-style "h s% l%" HSL components
+ * (no commas, no `hsl()` wrapper — that's how shadcn writes its CSS vars).
+ * Used to override --primary with the registry's accent color.
+ */
+function hexToHslComponents(hex: string): string {
+  const m = hex.replace("#", "").trim();
+  const v = m.length === 3 ? m.split("").map((c) => c + c).join("") : m;
+  if (!/^[0-9a-fA-F]{6}$/.test(v)) {
+    // Bad hex: fall back to default and warn — better than throwing mid-generate.
+    console.error(`[composoft] product.accentColor "${hex}" is not a valid hex color; using shadcn default for --primary`);
+    return "240 5.9% 10%";
+  }
+  const r = parseInt(v.slice(0, 2), 16) / 255;
+  const g = parseInt(v.slice(2, 4), 16) / 255;
+  const b = parseInt(v.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h /= 6;
+  }
+  return `${(h * 360).toFixed(2)} ${(s * 100).toFixed(1)}% ${(l * 100).toFixed(1)}%`;
 }
 
 function registryRedirect(registryPackageName: string): string {
@@ -606,8 +1169,10 @@ export async function POST(req: Request) {
 `;
 }
 
-function pageFile(pagePath: string): string {
-  return `import { ComposoftRuntime } from "@composoft/runtime";
+function pageFile(pagePath: string, hasChrome: boolean): string {
+  const pagePathLiteral = JSON.stringify(pagePath);
+  if (!hasChrome) {
+    return `import { ComposoftRuntime } from "@composoft/runtime";
 import { registry } from "@/lib/registry";
 import { composition } from "@/lib/composition";
 import { buildContext } from "@/lib/context";
@@ -626,8 +1191,41 @@ export default async function Page({ params }: { params: Promise<Params> }) {
       registry={registry}
       composition={composition}
       context={context}
-      pagePath=${JSON.stringify(pagePath)}
+      pagePath=${pagePathLiteral}
     />
+  );
+}
+`;
+  }
+  // Chrome path: page header from composition.pages[i].title/subtitle, then
+  // the runtime. Pulled at render time so editing lib/composition.ts updates
+  // the heading without regenerating page files.
+  return `import { ComposoftRuntime } from "@composoft/runtime";
+import { registry } from "@/lib/registry";
+import { composition } from "@/lib/composition";
+import { buildContext } from "@/lib/context";
+import { PageHeader } from "@/components/PageHeader";
+
+export const dynamic = "force-dynamic";
+
+type Params = Record<string, string | string[] | undefined>;
+
+const PAGE_PATH = ${pagePathLiteral};
+
+export default async function Page({ params }: { params: Promise<Params> }) {
+  const resolvedParams = await params;
+  const context = buildContext(resolvedParams);
+  const page = composition.pages.find((p) => p.path === PAGE_PATH);
+  return (
+    <>
+      <PageHeader title={page?.title} subtitle={page?.subtitle} />
+      <ComposoftRuntime
+        registry={registry}
+        composition={composition}
+        context={context}
+        pagePath={PAGE_PATH}
+      />
+    </>
   );
 }
 `;

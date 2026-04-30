@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent: #6366f1;
+  --accent-soft: #6366f11a;
+}
+
+.composoft-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+.composoft-page:has(.composoft-region-sidebar) {
+  grid-template-columns: minmax(0, 1fr) 22rem;
+}
+
+.composoft-region {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.composoft-region > * {
+  background: white;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.5rem;
+  padding: 1.25rem;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+}

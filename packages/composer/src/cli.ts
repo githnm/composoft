@@ -21,6 +21,7 @@ type Args = {
   brief: string;
   registry: string;
   out: string;
+  customer?: string;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -38,6 +39,9 @@ function parseArgs(argv: string[]): Args {
     } else if (flag === "--out" && value !== undefined) {
       args.out = value;
       i++;
+    } else if (flag === "--customer" && value !== undefined) {
+      args.customer = value;
+      i++;
     } else if (flag === "--help" || flag === "-h") {
       printUsage();
       process.exit(0);
@@ -53,11 +57,12 @@ function parseArgs(argv: string[]): Args {
 function printUsage(): void {
   console.error(
     [
-      "Usage: composoft compose --brief <path> --registry <package> --out <path>",
+      "Usage: composoft compose --brief <path> --registry <package> --out <path> [--customer <name>]",
       "",
       "  --brief    path to a markdown brief",
       "  --registry name of an installed registry package (e.g. @composoft/registry-example-postgres)",
       "  --out      directory to write the generated Next.js app into",
+      "  --customer customer display name shown in the generated app's chrome (e.g. \"Brewline\")",
       "",
       "Env:",
       "  ANTHROPIC_API_KEY    required",
@@ -139,6 +144,8 @@ async function compose(args: Args): Promise<void> {
     registryDir: resolved.packageDir,
     composition,
     contextSchemaTs: response.contextSchemaTs,
+    product: registry.product,
+    customer: args.customer,
   });
 
   const blocksPerPage = composition.pages

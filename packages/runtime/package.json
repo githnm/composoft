@@ -1,6 +1,6 @@
 {
   "name": "@composoft/runtime",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.3",
   "description": "Server runtime for composoft compositions: resolves data slots, binds actions, hosts page-state, gates auth. React Server Components + a 'use client' renderer.",
   "license": "MIT",
   "author": "Hoshang Mehta",

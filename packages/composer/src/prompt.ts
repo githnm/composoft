@@ -56,7 +56,9 @@ Each block instance in the JSON output uses **exactly these field names** — pi
 - \`config\` — the per-customer config object; must validate against the block's config schema.
 - \`layout.region\` — one of \`"main"\` or \`"sidebar"\`.
 
-Page object fields are: \`path\` (Next.js App Router pattern), \`blocks\` (array of the above), and an optional \`initialState\` (a JSON-serializable object seeding the page's shared client-side state — only include if the brief explicitly asks for a default selection or filter). **Do not add other fields like \`title\` or \`description\`** — unknown keys are rejected.
+Page object fields are: \`path\` (Next.js App Router pattern), \`blocks\` (array of the above), \`title\` (short, human-readable page heading — required for every page), \`subtitle\` (one short sentence describing the page — required for every page), and an optional \`initialState\` (a JSON-serializable object seeding the page's shared client-side state — only include if the brief explicitly asks for a default selection or filter). Do not add fields beyond these — unknown keys are rejected.
+
+The \`title\` is what shows in the page header above the blocks (e.g. "Pipeline", "Leads", "Purchase orders"). The \`subtitle\` is one short sentence giving the page its purpose (e.g. "Active deals across all stages.", "Inbound leads ready to qualify."). Match the customer's domain language from the brief — these strings are user-visible.
 
 Page paths follow Next.js App Router conventions: a path like "/tickets/[ticketId]" creates a dynamic segment and the runtime will populate the matching route param into context.
 

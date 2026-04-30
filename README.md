@@ -14,32 +14,54 @@ The library compounds. The bottleneck moves from "FDE time per customer" to "reg
 
 ## A 30-second demo
 
-A customer brief/prompt, in plain English:
+The repo ships with a CRM registry and two customer briefs that exercise the same registry, two ways. Same blocks, two layouts — that's the whole pitch.
+
+**Northwind** — enterprise sales, MEDDIC-style:
 
 ```
-Inventory dashboard for Brewline Coffee.
+Sales dashboard for Northwind, a B2B SaaS company.
 
-Show KPI cards at top: total SKUs, items below reorder, open POs, total open spend.
-Below that, low-stock alerts grouped by vendor with one-click PO creation.
-Below that, full inventory table with adjust-stock action.
-Scope everything to the Oakland Roastery warehouse.
+Northwind sells enterprise software with 6-month sales cycles. Reps focus
+on champion identification and MEDDIC qualification.
 
-Separate page for purchase orders, defaulting to draft status.
-PO detail page shows line items, vendor sidebar, approve and receive actions.
+Home page shows the deal pipeline kanban, an activity feed, and a rep
+leaderboard on the right. Clicking a deal opens a detail sidebar with
+contacts, activities, and quick actions.
+
+Leads page shows qualified leads, each with a Convert-to-deal button.
 ```
 
-One command:
+**Acme** — high-velocity inside sales:
+
+```
+Sales dashboard for Acme, a high-velocity inside sales team.
+
+Acme reps run round-robin across inbound leads. Speed matters.
+50-80 leads per rep per week.
+
+Home page focuses on a lead list filtered to "new" status, each with a
+Convert-to-deal button. Activity feed below.
+
+Pipeline page shows the deal kanban for converted deals.
+
+Skip the rep leaderboard. Skip the deal detail sidebar.
+Reps work fast, no need for deep deal views.
+```
+
+One command per customer, one registry:
 
 ```bash
-npx @composoft/composer compose \
-  --brief brewline.md \
-  --registry @your-org/registry \
-  --out apps/brewline
+export ANTHROPIC_API_KEY=sk-ant-...
+
+pnpm --filter @composoft/composer compose:northwind
+pnpm --filter @composoft/composer compose:acme
 ```
 
-30 seconds later, a working Next.js app pointed at the customer's database.
+30 seconds each. Two working Next.js apps in `packages/examples/`. The CRM example is fully in-memory — no database, no env vars beyond the API key. For the production-grade story (real Postgres, audit logging, persistence), see the brewline example backed by `@composoft/registry-example-postgres`.
 
-Click an inventory row, sidebar updates with item details. Click adjust on a row, change a quantity, refresh, persisted. Click approve on a PO, audit log records the real user. No page reloads, no stale data.
+```bash
+pnpm --filter @composoft/composer compose:brewline   # Postgres, real persistence
+```
 
 ## Install and try it
 
@@ -130,7 +152,8 @@ A versioned collection of adapters, workflows, and blocks. Owned by your enginee
 - Auth hooks: registries declare `authenticate` and `authorize`, runtime enforces them on every action and resolve.
 - Reference data: registries publish their canonical ids so the composer doesn't hallucinate them.
 - A scaffolder for new registries.
-- A reference implementation against Postgres with real persistence and audit logging.
+- Product/branding metadata: registries declare a `product` block (name, accent color, sidebar nav). The composer turns that into a real navbar, sidebar, and per-page header in the generated app — registries without it still get a bare layout.
+- Two reference registries: a Postgres-backed example (real persistence, audit logging) and an in-memory CRM example (zero setup, used for the per-customer-tailoring demo).
 
 ## What's missing
 
@@ -155,6 +178,11 @@ Four packages.
 **`@composoft/composer`** — CLI that calls Claude. Reads your registry, reads a brief, writes a composition, generates a Next.js app.
 
 **`@composoft/create`** — `npx @composoft/create my-registry` scaffolds a new registry.
+
+Two reference registries live in the workspace (not published — they're examples to read and fork):
+
+- **`@composoft/registry-example-postgres`** — production-grade Postgres example. Real persistence, audit logging, enrichContext for derived ids. Backs the `brewline` example app. Requires `DATABASE_URL`.
+- **`@composoft/registry-example-crm`** — fully in-memory CRM example. No database, no env vars beyond the API key. Backs the `northwind` and `acme` example apps and powers the per-customer-tailoring demo above.
 
 ## Companies this could fit
 
@@ -224,7 +252,7 @@ If your company has none of these (Salesforce-shaped enterprise SaaS with admin 
 
 ## Status
 
-Alpha. The spec is at `0.1.0-alpha.0`. Things will change. Adopters should expect to update their registries when the spec evolves.
+Alpha. The spec is at `0.1.0-alpha.2`. Things will change. Adopters should expect to update their registries when the spec evolves.
 
 ## License
 

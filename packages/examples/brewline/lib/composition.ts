@@ -6,6 +6,8 @@ export const composition: Composition = {
   "pages": [
     {
       "path": "/",
+      "title": "Operations",
+      "subtitle": "Roastery inventory health and procurement at a glance.",
       "blocks": [
         {
           "id": "ops.kpi-cards",
@@ -73,10 +75,12 @@ export const composition: Composition = {
     },
     {
       "path": "/purchase-orders",
+      "title": "Purchase orders",
+      "subtitle": "Draft POs awaiting approval.",
       "blocks": [
         {
           "id": "ops.po-list",
-          "instanceId": "po-list-draft",
+          "instanceId": "po-list",
           "config": {
             "defaultStatus": "draft",
             "columns": [
@@ -97,6 +101,8 @@ export const composition: Composition = {
     },
     {
       "path": "/purchase-orders/[poId]",
+      "title": "Purchase order",
+      "subtitle": "Review line items, approve, and receive.",
       "blocks": [
         {
           "id": "ops.po-detail",
@@ -110,7 +116,7 @@ export const composition: Composition = {
         },
         {
           "id": "ops.vendor-sidebar",
-          "instanceId": "po-vendor-sidebar",
+          "instanceId": "po-vendor",
           "config": {
             "sections": [
               "categoryBadge",

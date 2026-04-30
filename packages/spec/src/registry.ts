@@ -1,6 +1,63 @@
+import { z } from "zod";
 import type { AnyAdapter } from "./adapter.js";
 import type { AnyWorkflow } from "./workflow.js";
 import type { AnyBlock } from "./block.js";
+
+/**
+ * One entry in a product's primary navigation. The composer turns these into
+ * sidebar links in the generated app's chrome. `icon` is a string name that
+ * the generator looks up in `lucide-react` — invalid names render as a
+ * default fallback rather than crashing.
+ */
+export type NavigationItem = {
+  readonly label: string;
+  readonly path: string;
+  readonly icon?: string;
+};
+
+/**
+ * Optional product/branding metadata a registry may declare. The composer
+ * uses this to render real B2B-SaaS chrome (navbar, sidebar, page headers)
+ * around the generated app. Registries without a `product` block still work
+ * — the generator falls back to a bare layout.
+ *
+ * Why a registry-level field rather than a per-page one: the registry is
+ * the framework-author's surface, and the chrome (product name, accent
+ * color, primary nav) is constant across all customers built from one
+ * registry. Per-customer overrides happen via the composer's `--customer`
+ * flag, not here.
+ */
+export type ProductInfo = {
+  readonly name: string;
+  /** CSS color (hex, rgb, named). Threaded into the generated app's theme. */
+  readonly accentColor?: string;
+  readonly navigation?: ReadonlyArray<NavigationItem>;
+};
+
+const navigationItemSchema = z
+  .object({
+    label: z.string().min(1),
+    path: z.string().min(1),
+    icon: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const productInfoSchema = z
+  .object({
+    name: z.string().min(1, "product.name is required"),
+    accentColor: z.string().min(1).optional(),
+    navigation: z.array(navigationItemSchema).optional(),
+  })
+  .strict();
+
+/**
+ * Throws on invalid product info, returns the parsed value otherwise.
+ * Callers (the composer, registry _test.ts files) use this to surface
+ * configuration errors at validation time rather than at render time.
+ */
+export function validateProductInfo(value: unknown): ProductInfo {
+  return productInfoSchema.parse(value);
+}
 
 /**
  * Signature for a registry's optional context-enrichment hook. The runtime
@@ -148,4 +205,11 @@ export type Registry = {
    * If absent, all authenticated callers are allowed.
    */
   readonly authorize?: AuthorizeFn;
+  /**
+   * Optional product/branding metadata. When present, the composer
+   * generates real B2B chrome (navbar, sidebar with the listed nav items,
+   * per-page headers). When absent, the generated app falls back to the
+   * bare layout — no chrome, just the runtime regions.
+   */
+  readonly product?: ProductInfo;
 };

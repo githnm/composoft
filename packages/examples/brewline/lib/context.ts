@@ -2,20 +2,23 @@ import { z } from "zod";
 
 export const contextSchema = z.object({
   user: z.object({ id: z.string() }),
-  po: z.object({ id: z.string().optional() }).partial(),
-  vendor: z.object({ id: z.string().optional() }).partial(),
+  po: z.object({ id: z.string() }).partial({ id: true }).optional(),
+  vendor: z.object({ id: z.string() }).partial({ id: true }).optional(),
 });
 
 export type Context = z.infer<typeof contextSchema>;
 
-export function buildContext(
-  params: Record<string, string | string[] | undefined>,
-): Context {
-  const pick = (v: string | string[] | undefined): string | undefined =>
-    Array.isArray(v) ? v[0] : v;
+function firstParam(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+export function buildContext(params: Record<string, string | string[] | undefined>): Context {
+  const poId = firstParam(params.poId);
+  const vendorId = firstParam(params.vendorId);
   return {
     user: { id: "current-user" },
-    po: { id: pick(params.poId) },
-    vendor: { id: pick(params.vendorId) },
+    ...(poId ? { po: { id: poId } } : {}),
+    ...(vendorId ? { vendor: { id: vendorId } } : {}),
   };
 }

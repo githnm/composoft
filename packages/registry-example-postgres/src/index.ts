@@ -149,6 +149,14 @@ export const registry: Registry = {
   referenceData,
   authenticate,
   authorize,
+  product: {
+    name: "Operations",
+    accentColor: "#6366f1",
+    navigation: [
+      { label: "Home", path: "/", icon: "Home" },
+      { label: "Purchase orders", path: "/purchase-orders", icon: "FileText" },
+    ],
+  },
 };
 
 export type ExampleOpsRegistry = typeof registry;

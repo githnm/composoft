@@ -48,8 +48,12 @@ export type {
   AuthorizeFn,
   EnrichContextFn,
   Identity,
+  NavigationItem,
+  ProductInfo,
   ReferenceData,
   ReferenceDataFn,
   ReferenceItem,
   Registry,
 } from "./registry.js";
+
+export { productInfoSchema, validateProductInfo } from "./registry.js";

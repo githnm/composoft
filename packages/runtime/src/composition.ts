@@ -21,6 +21,14 @@ export type Composition = {
 export type CompositionPage = {
   readonly path: string;
   /**
+   * Optional page header. The composer emits these per-page so generated
+   * apps can render meaningful headings — "Pipeline" / "Active deals across
+   * all stages." rather than the raw URL path. The runtime ignores both
+   * fields; they're consumed by the generator's chrome.
+   */
+  readonly title?: string;
+  readonly subtitle?: string;
+  /**
    * Optional initial state for this page's shared client-side state. Must be
    * JSON-serializable. Used for the first server render; client takes over
    * after hydration. Any block that reads `from-page-state` paths without an
@@ -60,6 +68,8 @@ const pageSchema = z
       .string()
       .min(1)
       .regex(/^\//, "page path must start with '/'"),
+    title: z.string().min(1).optional(),
+    subtitle: z.string().min(1).optional(),
     initialState: z.record(z.string(), z.unknown()).optional(),
     blocks: z.array(blockInstanceSchema).min(1, "page must have at least one block"),
   })

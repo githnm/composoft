@@ -2,22 +2,27 @@ import { ComposoftRuntime } from "@composoft/runtime";
 import { registry } from "@/lib/registry";
 import { composition } from "@/lib/composition";
 import { buildContext } from "@/lib/context";
+import { PageHeader } from "@/components/PageHeader";
 
-// Composoft defaults to dynamic rendering so adapters always see fresh data.
-// Edit this for static or ISR semantics if your adapters are cache-friendly.
 export const dynamic = "force-dynamic";
 
 type Params = Record<string, string | string[] | undefined>;
 
+const PAGE_PATH = "/purchase-orders/[poId]";
+
 export default async function Page({ params }: { params: Promise<Params> }) {
   const resolvedParams = await params;
   const context = buildContext(resolvedParams);
+  const page = composition.pages.find((p) => p.path === PAGE_PATH);
   return (
-    <ComposoftRuntime
-      registry={registry}
-      composition={composition}
-      context={context}
-      pagePath="/purchase-orders/[poId]"
-    />
+    <>
+      <PageHeader title={page?.title} subtitle={page?.subtitle} />
+      <ComposoftRuntime
+        registry={registry}
+        composition={composition}
+        context={context}
+        pagePath={PAGE_PATH}
+      />
+    </>
   );
 }
