@@ -1,6 +1,6 @@
 {
   "name": "@composoft/spec",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Manifest contract for composoft: Adapter, Workflow, Block primitives plus Zod-backed validators. Zero runtime dependencies on React or Next.",
   "license": "MIT",
   "author": "Hoshang Mehta",
