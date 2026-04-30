@@ -6,6 +6,7 @@ import { validateComposition } from "@composoft/runtime";
 import { callComposer, resolveModel } from "./claude.js";
 import { generateNextApp } from "./generate.js";
 import { summarizeRegistry } from "./registry-summary.js";
+import { resolveRegistry } from "./resolve-registry.js";
 import {
   findPageStateWriterGaps,
   formatIssue,
@@ -69,11 +70,11 @@ async function compose(args: Args): Promise<void> {
   const briefPath = resolve(args.brief);
   const brief = await readFile(briefPath, "utf8");
 
-  const mod = (await import(args.registry)) as { registry?: Registry };
-  const registry = mod.registry;
+  const resolved = await resolveRegistry(args.registry);
+  const registry = resolved.module.registry as Registry | undefined;
   if (!registry || typeof registry !== "object") {
     throw new Error(
-      `registry package "${args.registry}" did not export a \`registry\` value. Make sure it is built and installed.`,
+      `registry "${args.registry}" did not export a \`registry\` value. Make sure it is built and installed.`,
     );
   }
 
@@ -134,7 +135,8 @@ async function compose(args: Args): Promise<void> {
   console.error(`-> generating Next.js app at ${args.out}`);
   const result = await generateNextApp({
     outDir: args.out,
-    registryPackage: args.registry,
+    registryPackageName: resolved.packageName,
+    registryDir: resolved.packageDir,
     composition,
     contextSchemaTs: response.contextSchemaTs,
   });

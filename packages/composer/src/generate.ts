@@ -1,22 +1,46 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { dirname, join, relative as pathRelative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Composition } from "@composoft/runtime";
 
 type GenerateInput = {
   outDir: string;
-  registryPackage: string;
+  /** Bare package name from the registry's package.json (e.g. "@acme/registry"). */
+  registryPackageName: string;
+  /** Absolute, real (symlink-resolved) path to the registry package directory. */
+  registryDir: string;
   composition: Composition;
   contextSchemaTs: string;
 };
 
 /**
- * Generate a Next.js 14 App Router project that renders the given
- * composition. Intentionally minimal: no auth, no middleware, no API routes,
- * no error boundaries beyond Next's defaults. The shape an FDE forks from.
+ * Generate a Next.js 15 App Router project that renders the given
+ * composition. Intentionally minimal: no auth UI, no middleware, no error
+ * boundaries beyond Next's defaults. The shape an FDE forks from.
+ *
+ * Path resolution strategy:
+ *   - The generated app's package.json declares the registry as a `file:`
+ *     dependency pointing at `registryDir`, computed relative to outDir. This
+ *     lets pnpm install link the registry into node_modules whether the
+ *     registry is in a sibling repo, a sibling workspace package, or anywhere
+ *     else on disk.
+ *   - For the in-monorepo brewline flow the resolved registryDir is the
+ *     symlink-resolved real path to packages/registry-example-postgres, so
+ *     the `file:` link still lands on the actual source.
+ *   - The Tailwind glob uses the same relative path so block components in
+ *     the registry are scanned for utility classes.
+ *   - lib/registry.ts re-exports by package name (registryPackageName), not
+ *     by absolute path — pnpm makes the package importable by name once
+ *     installed.
+ *   - @composoft/runtime is pinned to the running composer's version so the
+ *     generated app pulls a published runtime that matches the composer that
+ *     emitted the code.
  */
 export async function generateNextApp(input: GenerateInput): Promise<{ files: string[] }> {
-  const { outDir, registryPackage, composition, contextSchemaTs } = input;
+  const { outDir, registryPackageName, registryDir, composition, contextSchemaTs } = input;
   const root = resolve(outDir);
+  const registryRelative = posixify(pathRelative(root, registryDir));
+  const composerVersion = await readComposerVersion();
   const written: string[] = [];
 
   async function write(relative: string, content: string) {
@@ -26,17 +50,20 @@ export async function generateNextApp(input: GenerateInput): Promise<{ files: st
     written.push(relative);
   }
 
-  await write("package.json", projectPackageJson(composition.name, registryPackage));
+  await write(
+    "package.json",
+    projectPackageJson(composition.name, registryPackageName, registryRelative, composerVersion),
+  );
   await write("tsconfig.json", projectTsConfig());
   await write("next.config.mjs", nextConfig());
-  await write("tailwind.config.ts", tailwindConfig());
+  await write("tailwind.config.ts", tailwindConfig(registryRelative));
   await write("postcss.config.mjs", postcssConfig());
   await write(".gitignore", gitignore());
   await write(".env.example", envExampleFile());
-  await write("README.md", generatedReadme(composition.name, registryPackage));
+  await write("README.md", generatedReadme(composition.name, registryPackageName));
   await write("app/layout.tsx", appLayout(composition.name));
   await write("app/globals.css", globalsCss());
-  await write("lib/registry.ts", registryRedirect(registryPackage));
+  await write("lib/registry.ts", registryRedirect(registryPackageName));
   await write("lib/context.ts", contextSchemaTs);
   await write("lib/composition.ts", compositionTs(composition));
 
@@ -51,12 +78,50 @@ export async function generateNextApp(input: GenerateInput): Promise<{ files: st
   return { files: written };
 }
 
+function posixify(p: string): string {
+  // Always emit forward slashes so the generated package.json / tailwind
+  // config stays portable across Windows checkouts.
+  return p.split("\\").join("/");
+}
+
+/**
+ * Read the composer's own package.json at runtime so the generated app pins
+ * @composoft/* deps to the running composer's version. Walks up from this
+ * compiled file (dist/generate.js) to find package.json.
+ */
+async function readComposerVersion(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  let dir = here;
+  for (;;) {
+    const candidate = join(dir, "package.json");
+    try {
+      const raw = await readFile(candidate, "utf8");
+      const pkg = JSON.parse(raw) as { name?: string; version?: string };
+      if (pkg.name === "@composoft/composer" && typeof pkg.version === "string") {
+        return pkg.version;
+      }
+    } catch {
+      // keep walking
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error("could not locate @composoft/composer package.json to read version");
+    }
+    dir = parent;
+  }
+}
+
 function pagePathToSegment(path: string): string {
   if (path === "/") return "";
   return path.startsWith("/") ? path : `/${path}`;
 }
 
-function projectPackageJson(name: string, registryPackage: string): string {
+function projectPackageJson(
+  name: string,
+  registryPackageName: string,
+  registryRelative: string,
+  composerVersion: string,
+): string {
   return (
     JSON.stringify(
       {
@@ -70,8 +135,8 @@ function projectPackageJson(name: string, registryPackage: string): string {
           start: "next start",
         },
         dependencies: {
-          [registryPackage]: "workspace:*",
-          "@composoft/runtime": "workspace:*",
+          [registryPackageName]: `file:${registryRelative}`,
+          "@composoft/runtime": `^${composerVersion}`,
           next: "^15.0.0",
           react: "^19.0.0",
           "react-dom": "^19.0.0",
@@ -136,18 +201,19 @@ export default nextConfig;
 `;
 }
 
-function tailwindConfig(): string {
-  // The registry's source path is hardcoded for now. Block components live in
-  // the registry package; Tailwind needs to see their .tsx so utility classes
-  // in className attributes survive the bundle. Generalize later by having
-  // registry packages publish a `tailwindContent` path on the Registry type.
+function tailwindConfig(registryRelative: string): string {
+  // Block components live in the registry package; Tailwind needs to see
+  // their .tsx so utility classes in className attributes survive the
+  // bundle. The relative path is computed from the resolved registry
+  // package directory so this works whether the registry is a sibling
+  // workspace package, a local path dep, or installed from the registry.
   return `import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: [
     "./app/**/*.{ts,tsx}",
     "./lib/**/*.{ts,tsx}",
-    "../../registry-example-postgres/src/**/*.{ts,tsx}",
+    "${registryRelative}/src/**/*.{ts,tsx}",
   ],
   theme: { extend: {} },
   plugins: [],
@@ -204,10 +270,10 @@ COMPOSOFT_PG_SSL=auto
 `;
 }
 
-function generatedReadme(appName: string, registryPackage: string): string {
+function generatedReadme(appName: string, registryPackageName: string): string {
   return `# ${appName}
 
-Generated by \`@composoft/composer\` against \`${registryPackage}\`.
+Generated by \`@composoft/composer\` against \`${registryPackageName}\`.
 
 ## Setup
 
@@ -227,7 +293,7 @@ The app needs the registry's database to be reachable. Hosted providers (Supabas
 - \`app/api/composoft/action/route.ts\` — the action endpoint the runtime's client host POSTs to.
 - \`lib/composition.ts\` — the validated Composition the composer emitted.
 - \`lib/context.ts\` — the Zod context schema and \`buildContext()\` mapper for route params.
-- \`lib/registry.ts\` — re-exports the registry from \`${registryPackage}\`.
+- \`lib/registry.ts\` — re-exports the registry from \`${registryPackageName}\`.
 
 ## Editing
 
@@ -236,7 +302,7 @@ This is real code. Edit anything you want; commit it. The composer is one-shot, 
 ## Reference
 
 - [composoft spec](https://github.com/githnm/composoft) — adapter / workflow / block primitives.
-- [${registryPackage}] — the source of every block, adapter, workflow id this app uses.
+- [${registryPackageName}] — the source of every block, adapter, workflow id this app uses.
 `;
 }
 
@@ -265,8 +331,8 @@ function globalsCss(): string {
 `;
 }
 
-function registryRedirect(registryPackage: string): string {
-  return `export { registry } from ${JSON.stringify(registryPackage)};
+function registryRedirect(registryPackageName: string): string {
+  return `export { registry } from ${JSON.stringify(registryPackageName)};
 `;
 }
 
