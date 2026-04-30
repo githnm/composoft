@@ -36,7 +36,9 @@ pnpm --filter @composoft/composer compose:northwind
 
 
 The same registry, with a different brief, produces a totally different app:
-Acme runs round-robin lead assignment. Different brief produced lead-list-led layout, no kanban on home, no leaderboard. Same registry, same backend, fundamentally different surface.
+
+```
+Acme runs round-robin lead assignment. Different brief produced lead-list-led layout, no kanban on home, no leaderboard. Same registry, same backend, fundamentally different surface.```
 
 <img width="1465" height="919" alt="image" src="https://github.com/user-attachments/assets/6f1eb608-e180-4ebd-a483-a44de1a69af6" />
 
