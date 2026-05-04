@@ -124,8 +124,16 @@ export async function generateNextApp(input: GenerateInput): Promise<{ files: st
     for (const file of shadcn.files) {
       await write(file.dest, file.content);
     }
+    // Build the set of page paths the composition actually emits. Used
+    // below to filter `product.navigation` so the sidebar only shows
+    // links to pages that actually exist — clicking a nav item that
+    // points at a path the brief didn't request used to land on a 404.
+    const composedPaths = new Set(composition.pages.map((p) => p.path));
     await write("components/AppShell.tsx", appShellComponent());
-    await write("components/AppSidebar.tsx", appSidebarComponent(product, customer));
+    await write(
+      "components/AppSidebar.tsx",
+      appSidebarComponent(product, customer, composedPaths),
+    );
     await write("components/AppNavbar.tsx", appNavbarComponent(product, customer));
     await write("components/PageHeader.tsx", pageHeaderComponent());
   }
@@ -607,12 +615,25 @@ export function AppShell({ children }: { children: ReactNode }) {
 `;
 }
 
-function appSidebarComponent(product: ProductInfo, customer?: string): string {
+function appSidebarComponent(
+  product: ProductInfo,
+  customer: string | undefined,
+  /**
+   * The set of paths the composition actually emits as Next.js routes.
+   * Nav items pointing elsewhere are dropped at generate time so the
+   * sidebar never advertises a page that doesn't exist. If a registry
+   * declares e.g. `[Overview, Inventory, Procurement, Vendors]` but the
+   * brief only asked for the home page, only the matching nav items
+   * survive into the generated app's chrome.
+   */
+  composedPaths: ReadonlySet<string>,
+): string {
   // Uses shadcn's Sidebar compound (SidebarProvider lives in AppShell). Nav
   // items resolve their lucide icons by name at render time so registries
   // can declare arbitrary names without an icon registry. Unknown names
   // render the Circle fallback rather than crashing.
-  const items = product.navigation ?? [];
+  const declared = product.navigation ?? [];
+  const items = declared.filter((i) => composedPaths.has(i.path));
   const itemsJson = JSON.stringify(
     items.map((i) => ({ label: i.label, path: i.path, icon: i.icon ?? "Circle" })),
     null,

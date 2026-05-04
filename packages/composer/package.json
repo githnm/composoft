@@ -1,6 +1,6 @@
 {
   "name": "@composoft/composer",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "CLI that turns a customer brief and a registry into a Composition and a working Next.js 15 app. Calls Claude to produce the composition; validates against the registry; generates code.",
   "license": "MIT",
   "author": "Hoshang Mehta",

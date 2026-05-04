@@ -9,6 +9,20 @@ const CATEGORY_BADGE: Record<VendorCategory, string> = {
 };
 
 export function OpsVendorSidebar({ data, config }: Props) {
+  // `data.vendor` reads from-page-state (typically vendor.id, derived by
+  // enrichContext from po.id when this block sits next to po-detail).
+  // When nothing is selected the runtime auto-skips the slot and we
+  // receive null. Render a friendly empty state rather than dereferencing
+  // fields on null and crashing the page.
+  if (!data.vendor) {
+    return (
+      <aside className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500 shadow-sm">
+        <p className="font-medium text-slate-700">No vendor selected</p>
+        <p className="text-xs">Pick a row whose vendor you want to inspect.</p>
+      </aside>
+    );
+  }
+
   const v = data.vendor;
   const sections = new Set(config.sections);
 

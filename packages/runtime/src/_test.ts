@@ -352,6 +352,52 @@ const populatedResult = await resolveDataSlots(
 const sel = populatedResult.selected as { echoed: string };
 assert(sel.echoed === "itm_001", `populated page state: got ${sel.echoed}`);
 
+// Page state with the leaf explicitly null → auto-skip same as undefined.
+// Composer-emitted initialState JSON typically uses null (JSON has no
+// undefined), and adopters writing "clear selection" handlers also tend
+// to setPath(path, null). Both must short-circuit before the adapter runs.
+const nullLeafResult = await resolveDataSlots(
+  pageStateBlock,
+  { adapters: { "test.echo-required": requiredEchoAdapter } },
+  {},
+  {},
+  { selection: { itemId: null } },
+);
+assert(
+  nullLeafResult.selected === null,
+  `auto-skip on null leaf: expected null, got ${JSON.stringify(nullLeafResult.selected)}`,
+);
+
+// Page state where the entire branch is null (parent missing) → undefined
+// at leaf, same auto-skip path.
+const nullBranchResult = await resolveDataSlots(
+  pageStateBlock,
+  { adapters: { "test.echo-required": requiredEchoAdapter } },
+  {},
+  {},
+  { selection: null },
+);
+assert(
+  nullBranchResult.selected === null,
+  `auto-skip on null branch: expected null, got ${JSON.stringify(nullBranchResult.selected)}`,
+);
+
+// resolveOneSlot must auto-skip on null too — the resolve route handler
+// goes through this path on every CSR re-resolve, so the same semantics
+// apply when a page-state writer sets a path to null mid-session.
+const oneSlotNullResult = await resolveOneSlot(
+  pageStateBlock,
+  "selected",
+  { adapters: { "test.echo-required": requiredEchoAdapter } },
+  {},
+  {},
+  { selection: { itemId: null } },
+);
+assert(
+  oneSlotNullResult === null,
+  `resolveOneSlot null leaf: expected null, got ${JSON.stringify(oneSlotNullResult)}`,
+);
+
 // --- bindActions ---
 const noopWorkflow = defineWorkflow({
   id: "test.noop",

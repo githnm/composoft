@@ -37,7 +37,11 @@ export function ProductDetail({ data, actions }: Props) {
 
       <div>
         <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Stock by location</h3>
-        {data.stock.length === 0 ? (
+        {/* Both `data.product` and `data.stock` read selection.productId, so
+            they auto-skip together — past the early return above, both are
+            non-null in practice. The defensive guard is belt-and-suspenders
+            against future manifest tweaks that could decouple the slots. */}
+        {!data.stock || data.stock.length === 0 ? (
           <p className="text-xs text-slate-500">No stock at any location.</p>
         ) : (
           <table className="w-full text-sm">

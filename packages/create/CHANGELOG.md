@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-alpha.8
+
+Audited every `.component.tsx` across `registry-example-postgres`, `registry-example-crm`, and the four `@composoft/create` templates (`todo`, `support`, `booking`, `operations`) for null-safety after a cold-user crash on alpha.7. Two postgres detail blocks were missing their early-return guards and would crash when the runtime auto-skipped their from-context slots; both fixed:
+
+- `registry-example-postgres/src/blocks/po-detail.component.tsx` — added an early-return empty state on `data.po === null`. Pre-fix, accessing `po.poNumber` on a null PO crashed the page.
+- `registry-example-postgres/src/blocks/vendor-sidebar.component.tsx` — added an early-return empty state on `data.vendor === null`. Pre-fix, accessing `v.name` on a null vendor crashed the page.
+- `create/template/operations/src/blocks/product-detail.component.tsx` — defensive guard on `data.stock` (the slot is structurally non-null past the `data.product` early return, but the chain hardens against future manifest tweaks that could decouple the slots).
+
+The other 27 components were already null-safe — list-view blocks read adapter outputs that Zod guarantees non-null, and the existing detail/sidebar blocks (operations product-detail / po-detail, support ticket-detail / account-context, booking booking-detail, CRM deal-detail / contact-card / activity-feed, postgres item-detail-sidebar) all had early returns.
+
+The systemic fix lives in `@composoft/runtime@0.1.0-alpha.4`: `from-page-state` sources now auto-skip on null in addition to undefined, so composer-emitted `initialState: { selection: { ticketId: null } }` no longer cascades into a Zod failure. Adopters can now write any reasonable brief and the example apps will not crash on render.
+
 ## 0.1.0-alpha.7
 
 Three cold-user fixes against alpha.6.

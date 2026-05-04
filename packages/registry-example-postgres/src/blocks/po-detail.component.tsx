@@ -11,9 +11,21 @@ const STATUS_BADGE: Record<PoStatus, string> = {
 };
 
 export function OpsPoDetail({ data, actions, config }: Props) {
-  const po = data.po;
   const [busy, setBusy] = useState<"approve" | "receive" | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  // `data.po` reads selection.poId from page state. When no PO is
+  // selected the runtime auto-skips the slot and we get null — render
+  // a friendly empty state rather than crashing on `po.poNumber`.
+  if (!data.po) {
+    return (
+      <section className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500 shadow-sm">
+        <p className="font-medium text-slate-700">No purchase order selected</p>
+        <p className="text-xs">Pick a row from the PO list to see details here.</p>
+      </section>
+    );
+  }
+  const po = data.po;
 
   return (
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">

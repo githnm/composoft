@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-alpha.4
+
+The generated app's sidebar now strictly filters nav items to those whose path matches a page in the composition. Pre-fix, `product.navigation` was passed through verbatim — so a registry that declared `[Overview, Inventory, Procurement, Vendors, Approvals]` against a single-page brief would render all five sidebar links and 404 on four of them. Post-fix, only the links pointing at composed pages survive into `AppSidebar.tsx`'s `NAV_ITEMS` constant, so cold-test apps like Roastery (single page) show only "Overview" while multi-page Meridian shows the full nav. The pin to `@composoft/runtime` bumps to `^0.1.0-alpha.4` (auto-skip-null fix).
+
 ## 0.1.0-alpha.3
 
 Replaces the custom layout chrome with the full shadcn-ui (new-york style) library.

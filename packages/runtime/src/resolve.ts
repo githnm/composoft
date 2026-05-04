@@ -43,14 +43,26 @@ function tryReadPath(obj: unknown, path: string): unknown {
 }
 
 /**
+ * Both `null` and `undefined` indicate "no selection" for a from-page-state
+ * source. Composer-emitted `initialState` JSON typically uses explicit
+ * `null` (JSON has no `undefined`), and an adopter might also write null
+ * when clearing a selection. The auto-skip logic must treat both the same;
+ * otherwise a null-leaf in page state cascades into a Zod parse failure
+ * far away from the source of the issue.
+ */
+function isMissing(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
+/**
  * Resolve all of a Block's data slots: walk each slot, build params from its
  * ParamSources, validate against the adapter's `params` schema, run the
  * adapter, validate the output against the adapter's `output` schema.
  *
  * Auto-skip semantics: if a slot has any `from-page-state` param that
- * resolves to `undefined`, the slot is **skipped** — the adapter is not
- * called and `data[slotName]` is set to `null`. Components reading from
- * page state must declare `Data = { item: T | null }` and render a
+ * resolves to `null` or `undefined`, the slot is **skipped** — the adapter
+ * is not called and `data[slotName]` is set to `null`. Components reading
+ * from page state must declare `Data = { item: T | null }` and render a
  * placeholder for null. See spec README "Slots that resolve to null".
  */
 export async function resolveDataSlots(
@@ -73,7 +85,7 @@ export async function resolveDataSlots(
     let skipDueToMissingPageState = false;
     for (const [paramName, source] of Object.entries(slot.params)) {
       const value = resolveParamSource(source, ctx, config, pageState);
-      if (source.kind === "from-page-state" && value === undefined) {
+      if (source.kind === "from-page-state" && isMissing(value)) {
         skipDueToMissingPageState = true;
         break;
       }
@@ -120,7 +132,7 @@ export async function resolveOneSlot(
   const params: Record<string, unknown> = {};
   for (const [paramName, source] of Object.entries(slot.params)) {
     const value = resolveParamSource(source, ctx, config, pageState);
-    if (source.kind === "from-page-state" && value === undefined) {
+    if (source.kind === "from-page-state" && isMissing(value)) {
       return null; // same auto-skip as resolveDataSlots
     }
     params[paramName] = value;
