@@ -12,44 +12,58 @@ composoft replaces hand-edits with composition. You define a typed library of bl
 
 ## demo
 
+https://youtu.be/b-6pQLeG_Ak?si=hTDwu-xzf5N28hCY
 
-A customer brief, in plain English:
+Same registry. Two customer briefs. Two genuinely different apps.
+
+Roastery is a small DTC coffee roaster with one warehouse. Their brief asks for one page: KPIs, low-stock alerts, and a product table. No procurement, no vendors, no approvals.
 
 ```
-Sales dashboard for Northwind, a B2B SaaS company.
-Northwind sells enterprise software with 6-month sales cycles. Reps focus on
-champion identification and MEDDIC qualification.
-Home page (Pipeline) shows: deal pipeline kanban, activity feed, rep leaderboard
-on the right sidebar. Clicking a deal opens a detail view in a sidebar.
-Leads page shows the lead list with default filter "qualified", with a
-"Convert to deal" button on each row.
+Inventory dashboard for Roastery, a small DTC coffee roaster.
+Roastery operates one warehouse where they roast and ship from.
+Home page (Overview) is the only page they need:
+
+KPI row: total SKUs, units in stock, low stock count, total value
+Low-stock alerts showing what to reorder
+Product table with current stock levels
+
+Skip everything procurement-related: vendors, purchase orders, approvals.
 ```
+
 One command:
 
 ```bash
-pnpm --filter @composoft/composer compose:northwind
+npx @composoft/composer@alpha compose \
+  --brief brief-roastery.md \
+  --registry ./cargo-registry \
+  --customer Roastery \
+  --out apps/roastery
 ```
 
-30 seconds later: a working Next.js 15 app with shadcn-styled UI, real cross-block coordination, real auth hooks, real persistence. Pointing at the customer's data.
-
-<img width="1462" height="914" alt="image" src="https://github.com/user-attachments/assets/71578873-1cb5-4d7e-8d91-5234319c6b89" />
+<img width="832" height="467" alt="image" src="https://github.com/user-attachments/assets/39f6b382-ed96-497d-ba32-c117359417f3" />
 
 
-The same registry, with a different brief, produces a totally different app:
+Meridian Brands is a multi-brand consumer goods company with three warehouses, 50+ vendors, formal procurement workflows, and dedicated approval flows. Same registry, completely different brief.
 
 ```
-Acme runs round-robin lead assignment. Different brief produced lead-list-led layout, no kanban on home, no leaderboard. Same registry, same backend, fundamentally different surface.
-
+Operations dashboard for Meridian Brands.
+Meridian operates three warehouses with 50+ vendors and formal procurement.
+Overview page: executive view with inventory + procurement KPIs.
+Inventory page: product table, click to see per-location stock and transfer actions.
+Procurement page: PO list, click to approve or receive.
+Approvals page: dedicated approval workflow.
 ```
 
-<img width="1465" height="919" alt="image" src="https://github.com/user-attachments/assets/6f1eb608-e180-4ebd-a483-a44de1a69af6" />
+<img width="834" height="470" alt="image" src="https://github.com/user-attachments/assets/d61421b3-a4b2-4864-81af-4c5e811fbd6f" />
 
 
-That's the whole pitch. One library, one engineering team, many customer apps, each tailored to how that customer actually works.
+That's the whole pitch. One registry. One engineering team. Many customer apps, each shaped by what that customer actually does.
+
+The composer also surfaces what it couldn't build. If your brief asks for something the registry doesn't support, you get a model note saying so — not a fake button that doesn't work. The framework knows what it can't do, and tells you.
 
 ## Templates
 
-`@composoft/create` ships with three working domain templates plus a minimal todo baseline:
+`@composoft/create` ships with four working domain templates:
 
 ```bash
 npx @composoft/create my-support --template support
@@ -122,6 +136,50 @@ pnpm --filter @composoft/registry-example-postgres seed
 pnpm --filter @composoft/composer compose:brewline
 ```
 
+## Inspect across customers
+
+After you've generated a few apps, the framework remembers what it built and what it couldn't build. Run `composoft inspect` from your workspace root.
+
+```bash
+$ npx @composoft/composer@alpha inspect
+CUSTOMER         BRIEF              PAGES  BLOCKS  NOTES  GENERATED
+Meridian Brands  brief-meridian.md  4      9       4      2026-05-04
+Roastery         brief-roastery.md  1      3       4      2026-05-04
+```
+
+The default view lists every customer app generated in your workspace. Each row reads from a `.composoft-meta.json` sidecar that the composer writes next to every generated app.
+
+To see which gaps customers asked for most often:
+
+```bash
+$ npx @composoft/composer@alpha inspect --gaps
+GAPS FLAGGED ACROSS 2 CUSTOMERS
+
+2x  No dedicated approvals block in the registry
+     Asked in: Meridian Brands, Haldermann & Sons
+
+1x  No stock-movement feed block exists in the registry
+     Asked in: Meridian Brands
+```
+
+This is the FDE meta-view. With one customer, gaps are noise. With ten, they cluster. The blocks and adapters that show up most often are your registry roadmap, sourced from real customer asks.
+
+For full detail on one customer:
+
+```bash
+$ npx @composoft/composer@alpha inspect Roastery
+Customer:        Roastery
+Brief:           brief-roastery.md
+Generated:       2026-05-04T14:23:11Z
+Registry:        cargo-registry@0.0.1
+Pages (1):
+  /              3 blocks
+Model notes (4):
+  1. ...
+```
+
+The framework turns from a one-shot generator into a record of what your customers want.
+
 ## The four primitives
 
 **Adapter.** A typed read. Takes params, returns rows. Wraps a database query, an API call, or a calculation.
@@ -173,28 +231,31 @@ defineBlock({
 
 - Three primitives (adapters, workflows, blocks) with typed manifests.
 - A composer CLI that turns briefs into Next.js 15 apps using Claude.
-- A runtime that resolves data, binds actions, hosts page state.
+- A runtime that resolves data, binds actions, hosts page state. Auto-skips null/undefined values from page state cleanly, so first-render and pre-selection states render an empty state instead of crashing.
 - Cross-block coordination via shared page state. Click in one block, another updates.
+- Composer-time nav filtering: generated apps never ship orphan navigation links. If your brief skips a page, the sidebar drops the matching nav item automatically.
+- Honest gap reporting. The composer tells you what your brief asked for that the registry can't satisfy, in plain text, before the app ships.
+- Per-app metadata sidecar + `composoft inspect`. Workspace-level visibility into briefs, pages, and gap patterns across every customer.
 - Auth hooks: registries declare `authenticate` and `authorize`, runtime enforces them.
 - Reference data: registries publish their canonical ids so the composer doesn't hallucinate them.
 - Product branding and navigation: registries declare `product.name`, `product.navigation`, `product.accentColor`. Generated apps inherit consistent chrome.
 - Per-customer branding via `--customer` flag.
 - shadcn-based generated apps. Full shadcn library vendored into every generated app's `components/ui/`.
+- Four domain templates in `@composoft/create`: todo, support, booking, operations. Each ships seed data, working manifests, and a sample brief.
 - Two reference registries (in-memory CRM and Postgres-backed operations).
 - A scaffolder for new registries.
 
 ## What's missing
 
 - Block-level permissions (today, all auth lives in the registry's `authorize` function).
+- Workflow-level customization from briefs. The composer can route which workflow appears on which block, but can't generate new workflow logic. Workflow code stays registry-author territory.
 - Multi-region layouts beyond main + sidebar.
 - Hosted runtime (today, you deploy the generated app yourself).
 - Per-customer theming beyond accent color.
-- Starter registries for specific domains beyond CRM and operations (support, scheduling, finance).
 - Migration assistant for porting existing components into a registry.
 - Typed page-state and context schemas.
 - Base composition + brief-as-overlay (today, every brief generates a full app from scratch).
-
-These are real gaps. Some matter more than others depending on what you're building. Open issues if you hit one.
+- Agent-assisted registry extension: an agent writes candidate adapters and blocks for FDE review, sourcing from the gaps `inspect` surfaces. On the roadmap.
 
 ## Architecture
 
@@ -204,9 +265,9 @@ Four published packages, two reference registries, multiple example apps.
 
 **`@composoft/runtime`** — resolves data slots, binds actions, manages page state, gates auth. React Server Components plus a client renderer.
 
-**`@composoft/composer`** — CLI that calls Claude. Reads your registry, reads a brief, writes a composition, generates a Next.js 15 app with shadcn-styled chrome.
+**`@composoft/composer`** — CLI that calls Claude. Reads your registry, reads a brief, writes a composition, generates a Next.js 15 app with shadcn-styled chrome. Persists per-app metadata, surfaces workspace-wide patterns via `inspect`.
 
-**`@composoft/create`** — `npx @composoft/create my-registry` scaffolds a new registry.
+**`@composoft/create`** — `npx @composoft/create my-registry` scaffolds a new registry from one of four templates.
 
 In the repo:
 
@@ -214,7 +275,7 @@ In the repo:
 
 **`registry-example-postgres`** — reference operations registry (inventory, vendors, POs). Postgres-backed with audit logging and real persistence.
 
-**`packages/examples/*`** — three working example apps generated from briefs (Northwind, Acme, Brewline). Each app is a real Next.js 15 project anyone can clone, run, and modify.
+**`packages/examples/*`** — working example apps generated from briefs. Each app is a real Next.js 15 project anyone can clone, run, and modify.
 
 ## Companies this could fit
 
@@ -248,7 +309,13 @@ If your company has none of these (Salesforce-shaped enterprise SaaS with admin 
 
 ## Status
 
-Alpha. The spec is at `0.1.0-alpha.3`. Things will change. Adopters should expect to update their registries when the spec evolves.
+Alpha. Things will change. Adopters should expect to update their registries when the spec evolves.
+
+Current versions:
+- `@composoft/spec` 0.1.0-alpha.3
+- `@composoft/runtime` 0.1.0-alpha.4
+- `@composoft/composer` 0.1.0-alpha.5
+- `@composoft/create` 0.1.0-alpha.8
 
 ## License
 
