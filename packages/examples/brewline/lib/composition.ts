@@ -11,7 +11,7 @@ export const composition: Composition = {
       "blocks": [
         {
           "id": "ops.kpi-cards",
-          "instanceId": "home-kpis",
+          "instanceId": "kpis",
           "config": {
             "cards": [
               "totalSkus",
@@ -27,7 +27,7 @@ export const composition: Composition = {
         },
         {
           "id": "ops.low-stock-alerts",
-          "instanceId": "home-low-stock",
+          "instanceId": "low-stock",
           "config": {
             "warehouseId": "wh_oakland",
             "reorderQuantityMultiplier": 2
@@ -38,8 +38,9 @@ export const composition: Composition = {
         },
         {
           "id": "ops.inventory-table",
-          "instanceId": "home-inventory",
+          "instanceId": "inventory",
           "config": {
+            "warehouseId": "wh_oakland",
             "columns": [
               "name",
               "sku",
@@ -49,8 +50,7 @@ export const composition: Composition = {
               "vendor",
               "lowStock"
             ],
-            "pageSize": 50,
-            "warehouseId": "wh_oakland"
+            "pageSize": 50
           },
           "layout": {
             "region": "main"
@@ -58,7 +58,7 @@ export const composition: Composition = {
         },
         {
           "id": "ops.item-detail-sidebar",
-          "instanceId": "home-item-detail",
+          "instanceId": "item-detail",
           "config": {
             "sections": [
               "warehouse",
@@ -76,7 +76,7 @@ export const composition: Composition = {
     {
       "path": "/purchase-orders",
       "title": "Purchase orders",
-      "subtitle": "Draft POs awaiting approval.",
+      "subtitle": "Draft purchase orders awaiting approval.",
       "blocks": [
         {
           "id": "ops.po-list",
@@ -102,7 +102,7 @@ export const composition: Composition = {
     {
       "path": "/purchase-orders/[poId]",
       "title": "Purchase order",
-      "subtitle": "Review line items, approve, and receive.",
+      "subtitle": "Review line items and approve or receive shipment.",
       "blocks": [
         {
           "id": "ops.po-detail",
@@ -116,7 +116,7 @@ export const composition: Composition = {
         },
         {
           "id": "ops.vendor-sidebar",
-          "instanceId": "po-vendor",
+          "instanceId": "vendor-sidebar",
           "config": {
             "sections": [
               "categoryBadge",

@@ -1,0 +1,23 @@
+{
+  "name": "{{packageName}}",
+  "version": "{{registryVersion}}",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "node dist/_test.js"
+  },
+  "dependencies": {
+    "@composoft/spec": "^0.1.0-alpha.3",
+    "react": "^19.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.6.0"
+  }
+}

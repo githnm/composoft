@@ -1,0 +1,118 @@
+import type { AuthRequest, Identity, Registry } from "@composoft/spec";
+
+// Adapters
+import { productsList } from "./adapters/products-list.js";
+import { productsById } from "./adapters/products-by-id.js";
+import { stockLevelsByProduct } from "./adapters/stock-levels-by-product.js";
+import { stockLevelsSummary } from "./adapters/stock-levels-summary.js";
+import { lowStockList } from "./adapters/low-stock-list.js";
+import { vendorsList } from "./adapters/vendors-list.js";
+import { purchaseOrdersList } from "./adapters/purchase-orders-list.js";
+import { purchaseOrdersById } from "./adapters/purchase-orders-by-id.js";
+
+// Workflows
+import { stockAdjust } from "./workflows/stock-adjust.js";
+import { stockTransfer } from "./workflows/stock-transfer.js";
+import { purchaseOrdersCreate } from "./workflows/purchase-orders-create.js";
+import { purchaseOrdersApprove } from "./workflows/purchase-orders-approve.js";
+
+// Blocks
+import { inventoryKpiRowBlock } from "./blocks/inv-kpi-row.js";
+import { productTableBlock } from "./blocks/product-table.js";
+import { productDetailBlock } from "./blocks/product-detail.js";
+import { poListBlock } from "./blocks/po-list.js";
+import { poDetailBlock } from "./blocks/po-detail.js";
+
+import { db } from "./db.js";
+
+export const adapters = {
+  "products.list": productsList,
+  "products.by-id": productsById,
+  "stock-levels.by-product": stockLevelsByProduct,
+  "stock-levels.summary": stockLevelsSummary,
+  "low-stock.list": lowStockList,
+  "vendors.list": vendorsList,
+  "purchase-orders.list": purchaseOrdersList,
+  "purchase-orders.by-id": purchaseOrdersById,
+} as const;
+
+export const workflows = {
+  "stock.adjust": stockAdjust,
+  "stock.transfer": stockTransfer,
+  "purchase-orders.create": purchaseOrdersCreate,
+  "purchase-orders.approve": purchaseOrdersApprove,
+} as const;
+
+export const blocks = {
+  "inventory.kpi-row": inventoryKpiRowBlock,
+  "inventory.product-table": productTableBlock,
+  "inventory.product-detail": productDetailBlock,
+  "procurement.po-list": poListBlock,
+  "procurement.po-detail": poDetailBlock,
+} as const;
+
+/**
+ * Real ids surfaced to the composer so configs reference live entities.
+ */
+async function referenceData() {
+  const products = db.products.list({ pageSize: 100 });
+  const vendors = db.vendors.list({ pageSize: 50 });
+  return {
+    categories: [
+      { id: "beans",     label: "Beans" },
+      { id: "packaging", label: "Packaging" },
+      { id: "equipment", label: "Equipment" },
+    ],
+    locationIds: db.locations.list().map((l) => ({ id: l.id, label: l.name })),
+    statusValues: [
+      { id: "draft",     label: "Draft" },
+      { id: "submitted", label: "Submitted" },
+      { id: "approved",  label: "Approved" },
+      { id: "received",  label: "Received" },
+      { id: "closed",    label: "Closed" },
+      { id: "cancelled", label: "Cancelled" },
+    ],
+    productIds: products.items.map((p) => ({ id: p.id, label: `${p.sku} — ${p.name}` })),
+    vendorIds: vendors.items.map((v) => ({ id: v.id, label: v.name })),
+  };
+}
+
+/** Demo placeholder. Replace before deploying. */
+async function authenticate(request: Request): Promise<Identity | null> {
+  const userId = request.headers.get("X-Composoft-User");
+  if (!userId) return null;
+  return { userId, claims: { source: "header" } };
+}
+
+/** Demo placeholder. Allows everything; logs the request. */
+async function authorize(identity: Identity, request: AuthRequest): Promise<boolean> {
+  const target = request.kind === "action" ? request.workflowId : request.adapterId;
+  console.log(`[operations authorize] user=${identity.userId} kind=${request.kind} target=${target}`);
+  return true;
+}
+
+export const registry: Registry = {
+  name: "{{registryName}}",
+  version: "{{registryVersion}}",
+  adapters,
+  workflows,
+  blocks,
+  referenceData,
+  authenticate,
+  authorize,
+  product: {
+    name: "Operations",
+    accentColor: "#0f172a",
+    navigation: [
+      { label: "Overview",    path: "/",            icon: "LayoutDashboard" },
+      { label: "Inventory",   path: "/inventory",   icon: "Package" },
+      { label: "Procurement", path: "/procurement", icon: "ShoppingCart" },
+      { label: "Vendors",     path: "/vendors",     icon: "Building2" },
+      { label: "Approvals",   path: "/approvals",   icon: "CheckCircle" },
+    ],
+  },
+};
+
+export type OperationsRegistry = typeof registry;
+
+export { db } from "./db.js";

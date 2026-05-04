@@ -1,0 +1,6 @@
+{
+  "name": "Todo (minimal)",
+  "description": "Minimal baseline: one adapter, one workflow, one block. The starting point.",
+  "domain": "todo list",
+  "counts": { "adapters": 1, "workflows": 1, "blocks": 1 }
+}

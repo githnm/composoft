@@ -47,6 +47,32 @@ Acme runs round-robin lead assignment. Different brief produced lead-list-led la
 
 That's the whole pitch. One library, one engineering team, many customer apps, each tailored to how that customer actually works.
 
+## Templates
+
+`@composoft/create` ships with three working domain templates plus a minimal todo baseline:
+
+```bash
+npx @composoft/create my-support --template support
+npx @composoft/create my-booking --template booking
+npx @composoft/create my-ops --template operations
+npx @composoft/create my-todo --template todo
+```
+
+Or run interactively to pick:
+
+```bash
+npx @composoft/create my-registry
+```
+
+| Template | Domain | Counts | Highlights |
+|---|---|---|---|
+| `support` | Modern B2B customer support | 8 adapters, 5 workflows, 6 blocks | Multi-channel ticket queue, account context, escalation, macros |
+| `booking` | Calendly-shaped scheduling | 7 adapters, 3 workflows, 5 blocks | Event types, calendar view, booking detail sidebar |
+| `operations` | Inventory + procurement | 8 adapters, 4 workflows, 5 blocks | Product table, stock levels, PO list + approval flow |
+| `todo` | Minimal baseline | 1/1/1 | Starting point — three primitives, no domain bias |
+
+Each template ships realistic seed data, working manifests, and a sample brief in its README. Run `pnpm install && pnpm test` to confirm the template builds, then compose against it with the composer.
+
 ## Install and try it
 
 Scaffold a new registry:
@@ -58,7 +84,7 @@ pnpm install
 pnpm test
 ```
 
-The scaffolder generates a working in-memory registry with one adapter, one workflow, one block. Modify it to fit your domain.
+The scaffolder generates a working in-memory registry. Pass `--template <name>` to start from a domain-specific baseline (support / booking / operations) instead of the minimal todo skeleton.
 
 To run the composer against your registry:
 

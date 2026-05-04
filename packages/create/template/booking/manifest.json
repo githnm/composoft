@@ -1,0 +1,6 @@
+{
+  "name": "Booking",
+  "description": "Calendly-shaped scheduling: event types, hosts, bookings, customers",
+  "domain": "booking",
+  "counts": { "adapters": 7, "workflows": 3, "blocks": 5 }
+}
