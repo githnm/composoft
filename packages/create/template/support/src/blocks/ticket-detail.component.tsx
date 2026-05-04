@@ -3,8 +3,45 @@
 import { useState } from "react";
 import type { Props } from "./ticket-detail-types.js";
 
+const STATUS_DOT: Record<string, string> = {
+  new:      "bg-blue-500",
+  open:     "bg-amber-500",
+  pending:  "bg-slate-400",
+  resolved: "bg-emerald-500",
+  closed:   "bg-slate-300",
+};
+
+const PRIORITY_BADGE: Record<string, string> = {
+  low:    "bg-slate-50 text-slate-700 dark:bg-slate-900/50 dark:text-slate-300",
+  medium: "bg-slate-50 text-slate-700 dark:bg-slate-900/50 dark:text-slate-300",
+  high:   "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400",
+  urgent: "bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400",
+};
+
+function initialsOf(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return (parts[0] ?? "?").charAt(0).toUpperCase();
+  return ((parts[0] ?? "").charAt(0) + (parts[parts.length - 1] ?? "").charAt(0)).toUpperCase();
+}
+
+function Avatar({ name, fromAgent }: { name: string; fromAgent: boolean }) {
+  // Agents render with the primary fill (active speaker on this team's
+  // side). Requesters get a muted neutral fill so the thread reads at a
+  // glance — same convention Linear / Pylon use for inbound vs outbound.
+  const cls = fromAgent
+    ? "bg-primary text-primary-foreground"
+    : "bg-muted text-muted-foreground";
+  return (
+    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${cls}`}>
+      {initialsOf(name)}
+    </div>
+  );
+}
+
 export function TicketDetailView({ data, actions, config }: Props) {
   const [reply, setReply] = useState("");
+  const [showMacros, setShowMacros] = useState(false);
   const [busy, setBusy] = useState(false);
   const ticket = data.ticket;
   const conv = data.conversation;
@@ -12,7 +49,7 @@ export function TicketDetailView({ data, actions, config }: Props) {
   if (!ticket) {
     return (
       <section>
-        <p className="py-6 text-center text-sm text-slate-500">
+        <p className="py-12 text-center text-sm text-muted-foreground">
           Select a ticket from the inbox to see details.
         </p>
       </section>
@@ -20,51 +57,132 @@ export function TicketDetailView({ data, actions, config }: Props) {
   }
 
   return (
-    <section className="space-y-4">
-      <header className="space-y-1">
-        <h2 className="text-base font-semibold text-slate-900">{ticket.subject}</h2>
-        <p className="text-xs text-slate-500">
-          {ticket.accountName} · #{ticket.id} · {ticket.channel}
-        </p>
-        <div className="flex flex-wrap gap-2 pt-1 text-xs">
-          <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">{ticket.status}</span>
-          <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">priority: {ticket.priority}</span>
+    <section className="space-y-5">
+      <header className="space-y-2">
+        <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+          {ticket.accountName}
+        </span>
+        <h2
+          className="text-xl font-semibold leading-tight text-foreground"
+          style={{ fontFamily: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif" }}
+        >
+          {ticket.subject}
+        </h2>
+        <p className="text-xs text-muted-foreground">#{ticket.id} · {ticket.channel}</p>
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs">
+            <span className={`inline-block h-2 w-2 rounded-full ${STATUS_DOT[ticket.status] ?? "bg-slate-400"}`} />
+            <span className="text-foreground">{ticket.status}</span>
+          </span>
+          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${PRIORITY_BADGE[ticket.priority] ?? ""}`}>
+            {ticket.priority}
+          </span>
           {ticket.assigneeId ? (
-            <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">assigned: {ticket.assigneeId}</span>
+            <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+              assigned: {ticket.assigneeId}
+            </span>
           ) : null}
         </div>
       </header>
 
+      {/* Action buttons: subtle, grouped above the composer. Status-only
+          actions live here; the rich-input actions (escalate, assign with
+          target, send-reply) need their own UI below. */}
+      <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+        <button
+          type="button"
+          disabled={busy || ticket.status === "resolved"}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await actions.updateStatus({ status: "resolved" });
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="inline-flex items-center rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+        >
+          Mark resolved
+        </button>
+        <button
+          type="button"
+          disabled={busy || ticket.status === "pending"}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await actions.updateStatus({ status: "pending" });
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="inline-flex items-center rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+        >
+          Mark pending
+        </button>
+      </div>
+
+      {/* Conversation thread. Each message is a card-like container with
+          a colored left border — accent for agent replies, neutral for
+          requester. Avatar circle on the left, body text in the body. */}
       {conv && conv.messages.length > 0 ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {conv.messages.map((m) => (
             <div
               key={m.id}
-              className={`rounded-md border p-3 text-sm ${m.fromAgent ? "border-blue-100 bg-blue-50/50" : "border-slate-200 bg-white"}`}
+              className={
+                "flex gap-3 rounded-lg border border-l-4 bg-card p-3 " +
+                (m.fromAgent
+                  ? "border-border border-l-primary"
+                  : "border-border border-l-muted-foreground/40")
+              }
             >
-              <p className="mb-1 text-xs text-slate-500">
-                <span className="font-medium text-slate-700">{m.fromName}</span>{" · "}
-                {new Date(m.createdAt).toLocaleString()}
-              </p>
-              <p className="text-slate-800">{m.body}</p>
+              <Avatar name={m.fromName} fromAgent={m.fromAgent} />
+              <div className="min-w-0 flex-1">
+                <p className="mb-1 flex items-center gap-2 text-xs">
+                  <span className="font-medium text-foreground">{m.fromName}</span>
+                  <span className="text-muted-foreground">{new Date(m.createdAt).toLocaleString()}</span>
+                </p>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{m.body}</p>
+              </div>
             </div>
           ))}
         </div>
       ) : null}
 
-      <div className="space-y-2 border-t border-slate-200 pt-3">
+      {/* Composer. Macro picker is a dropdown above the textarea; clicking
+          a macro fills the textarea and closes the dropdown. The textarea
+          itself uses the shadcn input ring tokens so theme overrides work. */}
+      <div className="space-y-2 border-t border-border pt-4">
         {config.showMacros && data.macros.length > 0 ? (
-          <div className="flex flex-wrap gap-1 text-xs">
-            {data.macros.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setReply(m.body)}
-                className="rounded border border-slate-300 px-2 py-1 text-slate-700 hover:bg-slate-100"
-              >
-                {m.title}
-              </button>
-            ))}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowMacros((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              <span>Macros</span>
+              <svg viewBox="0 0 12 12" className="h-3 w-3 fill-current">
+                <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {showMacros ? (
+              <div className="absolute left-0 top-full z-10 mt-1 max-h-64 w-72 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md">
+                {data.macros.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setReply(m.body);
+                      setShowMacros(false);
+                    }}
+                    className="block w-full rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted"
+                  >
+                    <span className="block font-medium text-foreground">{m.title}</span>
+                    <span className="line-clamp-1 text-muted-foreground">{m.body}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
         <textarea
@@ -72,9 +190,9 @@ export function TicketDetailView({ data, actions, config }: Props) {
           onChange={(e) => setReply(e.target.value)}
           placeholder="Reply…"
           rows={4}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+          className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/20"
         />
-        <div className="flex flex-wrap gap-2">
+        <div className="flex items-center justify-end">
           <button
             type="button"
             disabled={busy || reply.trim() === ""}
@@ -87,24 +205,9 @@ export function TicketDetailView({ data, actions, config }: Props) {
                 setBusy(false);
               }
             }}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+            className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
             {busy ? "Sending…" : "Send reply"}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await actions.updateStatus({ status: "resolved" });
-              } finally {
-                setBusy(false);
-              }
-            }}
-            className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            Mark resolved
           </button>
         </div>
       </div>

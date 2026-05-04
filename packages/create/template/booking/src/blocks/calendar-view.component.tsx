@@ -6,10 +6,14 @@ import type { Props } from "./calendar-view-types.js";
 type View = "month" | "week" | "day";
 type Status = "all" | "confirmed" | "cancelled" | "completed";
 
-const statusBadge: Record<string, string> = {
-  confirmed: "bg-emerald-100 text-emerald-800",
-  cancelled: "bg-rose-100 text-rose-800",
-  completed: "bg-slate-100 text-slate-700",
+// Per-booking buttons use a colored dot prefix to indicate status — same
+// at-a-glance affordance the rest of the templates use for ticket /
+// product / PO statuses. The button itself stays neutral so multiple
+// bookings stacked in a single cell read as a list rather than a wall.
+const statusDot: Record<string, string> = {
+  confirmed: "bg-emerald-500",
+  cancelled: "bg-rose-500",
+  completed: "bg-slate-400",
 };
 
 function startOfDay(d: Date): Date {
@@ -141,10 +145,16 @@ export function CalendarView({ data, config, writes }: Props) {
                   <li key={b.id}>
                     <button
                       onClick={() => writes.selectedBooking(b.id)}
-                      className={`w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-muted ${statusBadge[b.status] ?? ""}`}
+                      className="flex w-full items-center gap-1.5 truncate rounded px-2 py-1 text-left text-xs text-foreground hover:bg-muted"
                       title={b.attendeeName}
                     >
-                      {new Date(b.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {b.attendeeName}
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot[b.status] ?? "bg-slate-400"}`}
+                        aria-hidden
+                      />
+                      <span className="truncate">
+                        {new Date(b.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {b.attendeeName}
+                      </span>
                     </button>
                   </li>
                 ))}

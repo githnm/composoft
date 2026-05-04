@@ -5,10 +5,19 @@ import type { Props } from "./product-table-types.js";
 
 type SortKey = "sku" | "name" | "category";
 
-const stockBadge: Record<string, string> = {
-  "in-stock": "bg-emerald-100 text-emerald-800",
-  "low-stock": "bg-amber-100 text-amber-800",
-  "out-of-stock": "bg-rose-100 text-rose-800",
+// Stock indicator: a colored dot + the status word. Same dot-and-label
+// pattern the support template uses for ticket statuses, so the visual
+// idiom carries across blocks the composer might lay out side-by-side.
+const stockDot: Record<string, string> = {
+  "in-stock":     "bg-emerald-500",
+  "low-stock":    "bg-amber-500",
+  "out-of-stock": "bg-red-500",
+};
+
+const stockText: Record<string, string> = {
+  "in-stock":     "text-emerald-700 dark:text-emerald-400",
+  "low-stock":    "text-amber-700 dark:text-amber-400",
+  "out-of-stock": "text-red-600 dark:text-red-400 font-medium",
 };
 
 export function ProductTable({ data, config, writes }: Props) {
@@ -98,10 +107,12 @@ export function ProductTable({ data, config, writes }: Props) {
                     {p.reorderPoint}
                   </td>
                   <td className="px-3 py-1.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${stockBadge[status.label]}`}
-                    >
-                      {status.label}
+                    <span className="inline-flex items-center gap-1.5 text-xs">
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${stockDot[status.label] ?? "bg-slate-400"}`}
+                        aria-hidden
+                      />
+                      <span className={stockText[status.label] ?? ""}>{status.label}</span>
                     </span>
                   </td>
                 </tr>

@@ -3,13 +3,17 @@
 import { useMemo } from "react";
 import type { Props } from "./po-list-types.js";
 
+// Status pill colors. Same semantic palette the support template uses
+// (gray=neutral, blue=in-flight, emerald=approved/done, purple=received,
+// red=cancelled). Dark-mode variants keep the badges legible against a
+// dark card surface.
 export const statusBadge: Record<string, string> = {
-  draft: "bg-slate-100 text-slate-700",
-  submitted: "bg-blue-100 text-blue-800",
-  approved: "bg-emerald-100 text-emerald-800",
-  received: "bg-purple-100 text-purple-800",
-  closed: "bg-zinc-200 text-zinc-700",
-  cancelled: "bg-rose-100 text-rose-800",
+  draft:     "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+  submitted: "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
+  approved:  "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+  received:  "bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
+  closed:    "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+  cancelled: "bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300",
 };
 
 function fmtDate(iso: string): string {
@@ -72,7 +76,7 @@ export function PoList({ data, writes }: Props) {
                 <td className="px-3 py-1.5">{vendorById.get(p.vendorId)?.name ?? p.vendorId}</td>
                 <td className="px-3 py-1.5">
                   <span
-                    className={`rounded-full px-2 py-0.5 text-xs ${statusBadge[p.status]}`}
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusBadge[p.status] ?? "bg-slate-100 text-slate-700"}`}
                   >
                     {p.status}
                   </span>

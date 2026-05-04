@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-alpha.7
+
+Three cold-user fixes against alpha.6.
+
+- **`messages.send` no longer crashes for unregistered users.** The workflow used to call `db.conversations.addMessage` with the caller's userId and the data layer threw `agent not found: demo-user` when the id wasn't seeded. The fix lifts agent resolution into the workflow itself: known agent ids resolve to the agent's name and `fromAgent: true`; unknown ids (including the runtime's default `demo-user`) accept the userId verbatim as `fromName` with `fromAgent: false`. Demos work without per-environment agent seeding; production setups that wire `X-Composoft-User` to a real agent id keep their attribution. The input schema's `body` field also gains `.trim().min(1, "reply body cannot be empty")` so empty replies fail with a clear, copy-friendly message.
+- **Visual polish across all six support blocks.** Plain-Tailwind classes (no shadcn imports) using shadcn token names so they resolve correctly when the registry is consumed by a generated app. ticket-queue: status as a colored dot + label, hover/select states, channel SVG dots, weighted priority text, left-edge accent bar on the selected row. ticket-detail: serif subject heading, account name pill, status-dot row, conversation thread with avatars and accent-bordered cards (left-bordered primary for agents, neutral for requesters), composer with macro dropdown and primary-styled Send button, action buttons grouped above the composer. account-context: serif name, plan-colored pill (gray/blue/violet for starter/growth/enterprise), 2x2 stat grid with health bar, account-manager avatar+name. kpi-row: card per metric with big tabular-nums number, uppercase muted label, top accent bar when SLA-at-risk > 0. recent-activity: timeline rail with channel-colored dots and status-toned text. agent-workload: avatar + role pill + workload bar that turns red at capacity.
+- **README sample brief now requests every page in `product.navigation`** so cold-test apps don't 404 on Tickets / Accounts / Agents links. Added a "Navigation vs pages" section explaining the relationship as a known limitation, with workarounds (request all paths in your brief, or trim `product.navigation` before composing).
+- **Booking polish:** event-type-grid duration as a pill; calendar-view bookings prefix a status-colored dot.
+- **Operations polish:** product-table stock indicator as a colored dot + status text; po-list status pills with semantic colors and dark-mode variants.
+
+Every component still starts with `"use client"` (verified by the catalog and template-level `_test.ts` validators).
+
 ## 0.1.0-alpha.6
 
 Fixes a cold-user resolve-route 500 in the support template surfaced on alpha.5.

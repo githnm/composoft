@@ -337,19 +337,27 @@ export const db = {
       msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
       return { ...clone(conv), messages: msgs };
     },
+    /**
+     * Append a message to a ticket's conversation.
+     *
+     * The caller (the workflow) is responsible for resolving the sender's
+     * display name and `fromAgent` flag — usually by looking up the
+     * authenticated userId in `db.agents`. This keeps the data layer
+     * dumb: it accepts whatever sender the caller hands it, doesn't
+     * throw on unknown identifiers, and stays decoupled from auth.
+     */
     addMessage: (
       ticketId: string,
-      params: { body: string; channel?: TicketChannel; fromAgentId: string },
+      params: { body: string; channel?: TicketChannel; fromName: string; fromAgent: boolean },
     ) => {
       const conv = conversations.find((c) => c.ticketId === ticketId);
       if (!conv) throw new Error(`conversation for ticket ${ticketId} not found`);
-      const agent = findOrThrow(agents, params.fromAgentId, "agent");
       const m: Message = {
         id: `m_${conv.id.slice(2)}_${messages.filter((x) => x.conversationId === conv.id).length}`,
         conversationId: conv.id,
         body: params.body,
-        fromAgent: true,
-        fromName: agent.name,
+        fromAgent: params.fromAgent,
+        fromName: params.fromName,
         channel: params.channel ?? conv.channel,
         createdAt: now(),
       };

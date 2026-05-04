@@ -56,7 +56,9 @@ export function EventTypeGrid({ data, config, writes }: Props) {
               />
               <div className="flex items-center justify-between pl-2">
                 <h3 className="text-sm font-semibold">{et.name}</h3>
-                <span className="text-xs text-muted-foreground">
+                {/* Duration as a pill — gives the card a clear secondary
+                    metric without competing with the title weight. */}
+                <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                   {et.durationMinutes} min
                 </span>
               </div>

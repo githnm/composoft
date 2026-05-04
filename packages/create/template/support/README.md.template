@@ -21,9 +21,21 @@ Should print: `OK — registry {{registryName}}@{{registryVersion}} passed: 8 ad
 
 ## Sample brief
 
-Save this as `brief.md` and feed it to the composer:
+Save this as `brief.md` and feed it to the composer. This brief requests every page the registry's `product.navigation` advertises, so no nav link 404s after compose:
 
-> Inbox dashboard for Beam, a B2B SaaS company supporting enterprise customers via Slack Connect. Show ticket queue prominently with account context always visible. Tickets at risk of SLA breach should be at the top. Pair the queue with a sidebar ticket-detail block. KPI strip across the top. Agent workload on a secondary page.
+> Inbox dashboard for Beam, a B2B SaaS company.
+>
+> Home page (Inbox) shows the ticket queue with KPI metrics at top. Tickets at SLA risk surface first. Click a ticket to view its conversation and account context in a sidebar.
+>
+> Tickets page shows the full ticket queue with detailed filters (status, priority, channel) and the same ticket-detail sidebar.
+>
+> Accounts page shows all accounts with their plan, ARR, health score, and recent ticket counts. Click an account to see all tickets for that account in a sidebar.
+>
+> Agents page shows agent workload with avg response time and current ticket count.
+>
+> Skip a separate Recent Activity page; the activity feed is integrated into the home page sidebar.
+>
+> Brand for Beam in the navbar.
 
 Then:
 
@@ -35,6 +47,20 @@ npx @composoft/composer compose \
   --out ../app
 ```
 
+## Navigation vs pages
+
+The registry's `product.navigation` declares the sidebar nav items the generated app renders. The brief you feed the composer determines which pages actually exist. **These two lists can diverge**:
+
+- A nav item that points to a path the brief didn't request will render in the sidebar but route to Next.js's default 404 when clicked.
+- A page in the composition that isn't in nav is reachable by URL but not discoverable from the chrome.
+
+Two ways to keep them in sync today:
+
+1. **Request every nav path in your brief**, like the sample above. The brief calls out Inbox, Tickets, Accounts, and Agents — all four match `product.navigation` in `src/index.ts`.
+2. **Trim the nav to match what you intend to compose** by editing `product.navigation` in `src/index.ts` before running the composer.
+
+Auto-dropping orphan nav items (or auto-adding routes for orphan pages) is on the roadmap. Until then, the sample brief is the safest default — drop in your customer's name and the chrome stays consistent end-to-end.
+
 ## Page-state coordination
 
 Three blocks talk to each other through the runtime's shared page state:
@@ -42,6 +68,8 @@ Three blocks talk to each other through the runtime's shared page state:
 1. `support.ticket-queue` writes `selection.ticketId` when a row is clicked.
 2. `support.ticket-detail` reads `selection.ticketId` to load the thread for the active ticket.
 3. `support.account-context` reads `selection.accountId` (set by adopters wiring extra clicks, or seeded via the page's `initialState`).
+
+Writers pass the **leaf value** at the manifest's path. A writer bound to `selection.ticketId` should be called with the ticket id string directly — `writes.selectTicket("tkt_001")`. Wrapping it (`writes.selectTicket({ ticketId: "tkt_001" })`) lands an object at the leaf path and downstream readers fail their Zod parse.
 
 The composer detects unresolved page-state reads and warns at compose time if a page reads a path that no block on that page writes.
 
