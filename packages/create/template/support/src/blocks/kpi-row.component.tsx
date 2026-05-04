@@ -1,3 +1,5 @@
+"use client";
+
 import type { Props } from "./kpi-row-types.js";
 
 export function KpiRowView({ data }: Props) {

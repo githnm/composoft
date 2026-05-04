@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-alpha.5
+
+Fixes a cold-user RSC-boundary issue surfaced on alpha.4 against the support template.
+
+- Added `"use client"` as the first line of four block components that were missing it: `support/blocks/kpi-row.component.tsx`, `support/blocks/agent-workload.component.tsx`, `support/blocks/recent-activity.component.tsx`, and `operations/blocks/inv-kpi-row.component.tsx`. composoft passes block components through the React Server Component boundary as values, so every block component must be a Client Component regardless of whether it uses hooks. The previous omissions caused `next dev` to fail with a misleading "Functions cannot be passed directly to Client Components" error.
+- New validator in every template's `_test.ts`: walks `src/blocks/*.component.tsx` and fails the test loud if any file's first line isn't the `"use client"` directive. Catches the issue at registry-test time rather than in the generated app's `next dev`. Failure message: `block component file <path> must start with "use client". composoft block components are passed through the RSC boundary and must be Client Components.`
+- The validator is duplicated across the four templates (todo, support, booking, operations) per design discussion — keeping the helper inline avoids an extra package and lets adopters who scaffold a registry get the check for free, without needing to install a separate `@composoft/test-utils`.
+
 ## 0.1.0-alpha.4
 
 Added `--template <name>` flag with three working domain templates: `support` (Pylon-shaped B2B support inbox with multi-channel tickets and account context), `booking` (Calendly-shaped scheduling with event types, hosts, and bookings), and `operations` (inventory + procurement: products, stock levels, purchase orders). The TODO baseline remains as a fourth template option for minimal scaffolding.

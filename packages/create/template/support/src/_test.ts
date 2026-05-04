@@ -1,6 +1,8 @@
 // Manifest validation for the support registry. Does NOT touch any
 // network or external service. Run with `pnpm test`.
 
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { validateAdapter, validateBlock, validateWorkflow } from "@composoft/spec";
 import { registry } from "./index.js";
 
@@ -11,6 +13,42 @@ function record(scope: string, fn: () => void) {
     fn();
   } catch (e) {
     failures.push(`${scope}: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Block components are passed through the React Server Component boundary
+ * as values (the runtime renders them inside a server component, but they
+ * receive React state and event handlers as props). Every .component.tsx
+ * file MUST start with `"use client"` — regardless of whether it uses
+ * hooks. This validator catches missing directives at registry-test time
+ * instead of in `next dev`, where the error reads as a framework bug
+ * rather than an authoring mistake.
+ */
+async function validateBlockComponentDirectives(): Promise<void> {
+  const blocksDir = join(process.cwd(), "src", "blocks");
+  let entries: string[];
+  try {
+    entries = await readdir(blocksDir);
+  } catch (e) {
+    // No blocks/ dir → nothing to check. Most registries have one, but
+    // failing here would be misleading for a registry without UI blocks.
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    failures.push(`use-client check: cannot read ${blocksDir}: ${(e as Error).message}`);
+    return;
+  }
+  const directiveRe = /^\s*["']use client["']\s*;?\s*$/;
+  for (const entry of entries) {
+    if (!entry.endsWith(".component.tsx") && !entry.endsWith(".component.ts")) continue;
+    const path = join(blocksDir, entry);
+    const raw = await readFile(path, "utf8");
+    const firstLine = raw.split(/\r?\n/)[0] ?? "";
+    if (!directiveRe.test(firstLine)) {
+      failures.push(
+        `block component file ${path} must start with "use client". ` +
+          `composoft block components are passed through the RSC boundary and must be Client Components.`,
+      );
+    }
   }
 }
 
@@ -60,6 +98,8 @@ for (const [key, block] of Object.entries(registry.blocks)) {
     }
   }
 }
+
+await validateBlockComponentDirectives();
 
 const counts = {
   adapters: Object.keys(registry.adapters).length,

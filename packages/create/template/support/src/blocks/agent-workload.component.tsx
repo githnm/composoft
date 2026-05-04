@@ -1,3 +1,5 @@
+"use client";
+
 import type { Props } from "./agent-workload-types.js";
 
 export function AgentWorkloadView({ data }: Props) {

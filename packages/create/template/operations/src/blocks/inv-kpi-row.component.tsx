@@ -1,3 +1,5 @@
+"use client";
+
 import type { Props } from "./inv-kpi-row-types.js";
 
 export function InventoryKpiRow({ data }: Props) {

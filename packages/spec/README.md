@@ -44,6 +44,26 @@ export const listTickets = defineAdapter({
 
 For the full spec, the design rationale, and the longer reference, see the [top-level README](https://github.com/githnm/composoft#readme) and [packages/spec/src/README.md](https://github.com/githnm/composoft/blob/main/packages/spec/src/README.md).
 
+## Block components require `"use client"`
+
+Every block's `.component.tsx` file MUST start with `"use client";` as its first line. composoft passes block components through the React Server Component boundary as values; only Client Components can be passed this way.
+
+This is true regardless of whether the component uses hooks. A block that just displays data with no interactive state still needs `"use client"`.
+
+```tsx
+"use client";
+
+import type { Props } from "./kpi-row-types.js";
+
+export function KpiRowView({ data }: Props) {
+  return <div>{data.metrics.openCount} open</div>;
+}
+```
+
+If you forget, `next dev` surfaces a confusing framework error: *"Functions cannot be passed directly to Client Components unless you explicitly expose it by marking it with 'use server'."* The error is misleading — the fix is to add `"use client"` to the block component file, not to mark anything as `"use server"`.
+
+To catch this at the registry level instead of in the generated app, every scaffolded registry's `_test.ts` walks `src/blocks/*.component.tsx` and verifies the first line is the directive. The `@composoft/create` templates ship this check by default.
+
 ## Versioning
 
 Follows semver. `0.1.0-alpha.x` is the first published series — expect spec-level changes between alpha tags.

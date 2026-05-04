@@ -1,3 +1,5 @@
+"use client";
+
 import type { Props } from "./recent-activity-types.js";
 
 const CHANNEL_LABEL: Record<string, string> = {
