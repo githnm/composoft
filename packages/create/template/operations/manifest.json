@@ -1,0 +1,6 @@
+{
+  "name": "Operations",
+  "description": "Inventory + procurement: products, stock levels, purchase orders, approvals",
+  "domain": "operations",
+  "counts": { "adapters": 8, "workflows": 4, "blocks": 5 }
+}

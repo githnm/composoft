@@ -9,12 +9,17 @@ export function PageHeader({
 }): ReactElement | null {
   if (!title && !subtitle) return null;
   return (
-    <div className="mb-6">
+    <div className="mb-8">
       {title ? (
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
+        <h1
+          className="text-2xl font-semibold text-foreground"
+          style={{ fontFamily: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif" }}
+        >
+          {title}
+        </h1>
       ) : null}
       {subtitle ? (
-        <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
       ) : null}
     </div>
   );

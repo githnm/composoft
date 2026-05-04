@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 import { readdir, stat } from "node:fs/promises";
-import { dirname, basename, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, resolve, relative } from "node:path";
 import { spawn } from "node:child_process";
 import * as p from "@clack/prompts";
 import { renderTemplate, type TemplateContext } from "./render.js";
 import { isValidPackageName, runPrompts, type Defaults } from "./prompts.js";
+import {
+  isTemplateId,
+  loadTemplate,
+  loadTemplates,
+  TEMPLATE_IDS,
+  type TemplateId,
+  type TemplateInfo,
+} from "./templates.js";
 
 type Args = {
   targetDir?: string;
+  templateId?: string;
   yes: boolean;
   skipInstall: boolean;
   help: boolean;
@@ -16,11 +24,25 @@ type Args = {
 
 function parseArgs(argv: string[]): Args {
   const args: Args = { yes: false, skipInstall: false, help: false };
-  for (const arg of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === undefined) continue;
     if (arg === "--yes" || arg === "-y") args.yes = true;
     else if (arg === "--no-install") args.skipInstall = true;
     else if (arg === "--help" || arg === "-h") args.help = true;
-    else if (!arg.startsWith("-")) args.targetDir = arg;
+    else if (arg === "--template") {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        console.error("--template requires a value (one of: " + TEMPLATE_IDS.join(", ") + ")");
+        process.exit(2);
+      }
+      args.templateId = next;
+      i++;
+    } else if (arg.startsWith("--template=")) {
+      args.templateId = arg.slice("--template=".length);
+    } else if (!arg.startsWith("-")) {
+      args.targetDir = arg;
+    }
   }
   return args;
 }
@@ -28,14 +50,28 @@ function parseArgs(argv: string[]): Args {
 function printUsage(): void {
   console.log(
     [
-      "Usage: npx @composoft/create <directory> [--yes] [--no-install]",
+      "Usage: npx @composoft/create <directory> [options]",
       "",
-      "Scaffold a new composoft registry from a template.",
+      "Scaffold a new composoft registry from a working template.",
       "",
-      "  <directory>     where to create the registry. Will be created if missing.",
-      "  --yes, -y       accept all defaults; skip interactive prompts",
-      "  --no-install    skip the post-scaffold dependency install",
-      "  --help, -h      show this help",
+      "  <directory>           where to create the registry. Will be created if missing.",
+      "  --template <name>     pick a template (skips the interactive picker)",
+      "                        names: " + TEMPLATE_IDS.join(", "),
+      "  --yes, -y             accept all defaults; skip interactive prompts",
+      "                        (combined with no --template, defaults to `todo`)",
+      "  --no-install          skip the post-scaffold dependency install",
+      "  --help, -h            show this help",
+      "",
+      "Templates",
+      "  todo         Minimal baseline. One adapter, one workflow, one block.",
+      "  support      Modern B2B support inbox with multi-channel tickets and account context.",
+      "  booking      Calendly-shaped scheduling with event types, hosts, and bookings.",
+      "  operations   Inventory + procurement: products, stock levels, purchase orders.",
+      "",
+      "Examples",
+      "  npx @composoft/create my-registry",
+      "  npx @composoft/create my-support --template support",
+      "  npx @composoft/create my-booking --template booking --yes",
     ].join("\n"),
   );
 }
@@ -63,12 +99,6 @@ function defaultPackageName(dir: string): string {
   return isValidPackageName(name) ? name : "my-registry";
 }
 
-function templateDir(): string {
-  // dist/cli.js → ../template
-  const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, "..", "template");
-}
-
 async function runInstall(dir: string): Promise<{ ok: boolean; cmd: string; error?: string }> {
   for (const cmd of ["pnpm", "npm"] as const) {
     try {
@@ -90,11 +120,40 @@ async function runInstall(dir: string): Promise<{ ok: boolean; cmd: string; erro
   return { ok: false, cmd: "npm", error: "no installer found" };
 }
 
+async function resolveTemplateChoice(
+  args: Args,
+  catalog: TemplateInfo[],
+): Promise<TemplateId | "interactive"> {
+  if (args.templateId !== undefined) {
+    if (!isTemplateId(args.templateId)) {
+      console.error(
+        `Unknown template "${args.templateId}". Available: ${TEMPLATE_IDS.join(", ")}.`,
+      );
+      process.exit(2);
+    }
+    return args.templateId;
+  }
+  if (args.yes) {
+    // Backward compat: --yes without --template falls back to the minimal
+    // todo baseline so existing scripted callers don't suddenly get a
+    // different scaffold.
+    return "todo";
+  }
+  // Else the interactive runPrompts() picker handles selection.
+  return "interactive";
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     printUsage();
     return;
+  }
+
+  const catalog = await loadTemplates();
+  if (catalog.length === 0) {
+    console.error("No templates found under packages/create/template/. The package is broken.");
+    process.exit(1);
   }
 
   let targetDir = args.targetDir;
@@ -128,28 +187,41 @@ async function main(): Promise<void> {
     return;
   }
 
+  const presetTemplate = await resolveTemplateChoice(args, catalog);
+
   const defaults: Defaults = {
     packageName: defaultPackageName(absoluteDir),
     domain: "todo list",
+    templateId: presetTemplate === "interactive" ? "todo" : presetTemplate,
     installDeps: !args.skipInstall,
   };
 
-  const answers = args.yes
-    ? { ...defaults, installDeps: !args.skipInstall }
-    : await runPrompts(defaults);
+  const answers =
+    args.yes || presetTemplate !== "interactive"
+      ? {
+          packageName: defaults.packageName,
+          domain:
+            catalog.find((t) => t.id === defaults.templateId)?.domain ?? defaults.domain,
+          templateId: defaults.templateId,
+          installDeps: !args.skipInstall,
+        }
+      : await runPrompts(defaults, catalog);
+
+  const template = await loadTemplate(answers.templateId);
 
   const context: TemplateContext = {
     packageName: answers.packageName,
+    registryName: answers.packageName.replace(/^@[^/]+\//, "").toLowerCase(),
+    registryVersion: "0.0.1",
     packageNameSafe: answers.packageName.replace(/^@/, "").replace(/\//g, "-"),
     dirName: basename(absoluteDir),
     domain: answers.domain,
     year: new Date().getFullYear(),
   };
 
-  const tplDir = templateDir();
-  const written = await renderTemplate(tplDir, absoluteDir, context);
+  const written = await renderTemplate(template.path, absoluteDir, context);
 
-  if (!args.yes) {
+  if (!args.yes && presetTemplate === "interactive") {
     p.note(
       `${written.length} files written to ${absoluteDir}`,
       "scaffold complete",
@@ -168,14 +240,19 @@ async function main(): Promise<void> {
     }
   }
 
-  // Next steps
+  // Next steps. Counts come from the chosen template's manifest so the
+  // banner is honest about what just got written.
+  const { adapters, workflows, blocks } = template.counts;
+  const relPath = relative(process.cwd(), absoluteDir) || ".";
   const lines = [
     "",
     `Created your registry at ${absoluteDir}`,
+    `Template: ${template.name} — ${template.description}`,
+    `Counts: ${adapters} adapter${adapters === 1 ? "" : "s"}, ${workflows} workflow${workflows === 1 ? "" : "s"}, ${blocks} block${blocks === 1 ? "" : "s"}`,
     "",
     "Next steps:",
     "",
-    `  cd ${targetDir}`,
+    `  cd ${relPath}`,
     answers.installDeps ? null : "  pnpm install",
     "  pnpm test          # validates the manifests",
     "",
@@ -184,6 +261,8 @@ async function main(): Promise<void> {
     "Once you have your registry, point the composoft composer at it:",
     "",
     `  npx @composoft/composer compose --brief brief.md --registry ${answers.packageName} --out ../app`,
+    "",
+    "Or compose against it: see README.md for a sample brief tailored to this template.",
     "",
   ].filter((l): l is string => l !== null);
 

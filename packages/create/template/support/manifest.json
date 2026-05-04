@@ -1,0 +1,6 @@
+{
+  "name": "Customer support",
+  "description": "Modern B2B support inbox with multi-channel tickets and account context",
+  "domain": "support",
+  "counts": { "adapters": 8, "workflows": 5, "blocks": 6 }
+}

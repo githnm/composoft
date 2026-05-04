@@ -1,6 +1,6 @@
 {
   "name": "@composoft/create",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Scaffold a new composoft registry. Run with `npx @composoft/create my-registry`.",
   "license": "MIT",
   "author": "Hoshang Mehta",
@@ -32,7 +32,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "clean": "rm -rf dist",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node dist/_test.js"
   },
   "dependencies": {
     "@clack/prompts": "^0.7.0"

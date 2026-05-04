@@ -1,0 +1,143 @@
+import type {
+  AuthenticateFn,
+  AuthorizeFn,
+  Identity,
+  Registry,
+} from "@composoft/spec";
+
+import { ticketsList } from "./adapters/tickets-list.js";
+import { ticketsById } from "./adapters/tickets-by-id.js";
+import { ticketsMetrics } from "./adapters/tickets-metrics.js";
+import { conversationsByTicket } from "./adapters/conversations-by-ticket.js";
+import { accountsList } from "./adapters/accounts-list.js";
+import { accountsById } from "./adapters/accounts-by-id.js";
+import { agentsList } from "./adapters/agents-list.js";
+import { macrosList } from "./adapters/macros-list.js";
+
+import { ticketsAssign } from "./workflows/tickets-assign.js";
+import { ticketsUpdateStatus } from "./workflows/tickets-update-status.js";
+import { ticketsUpdatePriority } from "./workflows/tickets-update-priority.js";
+import { ticketsEscalate } from "./workflows/tickets-escalate.js";
+import { messagesSend } from "./workflows/messages-send.js";
+
+import { ticketQueueBlock } from "./blocks/ticket-queue.js";
+import { ticketDetailBlock } from "./blocks/ticket-detail.js";
+import { accountContextBlock } from "./blocks/account-context.js";
+import { kpiRowBlock } from "./blocks/kpi-row.js";
+import { agentWorkloadBlock } from "./blocks/agent-workload.js";
+import { recentActivityBlock } from "./blocks/recent-activity.js";
+
+import { db } from "./db.js";
+
+export const adapters = {
+  "tickets.list": ticketsList,
+  "tickets.by-id": ticketsById,
+  "tickets.metrics": ticketsMetrics,
+  "conversations.by-ticket": conversationsByTicket,
+  "accounts.list": accountsList,
+  "accounts.by-id": accountsById,
+  "agents.list": agentsList,
+  "macros.list": macrosList,
+} as const;
+
+export const workflows = {
+  "tickets.assign": ticketsAssign,
+  "tickets.update-status": ticketsUpdateStatus,
+  "tickets.update-priority": ticketsUpdatePriority,
+  "tickets.escalate": ticketsEscalate,
+  "messages.send": messagesSend,
+} as const;
+
+export const blocks = {
+  "support.ticket-queue": ticketQueueBlock,
+  "support.ticket-detail": ticketDetailBlock,
+  "support.account-context": accountContextBlock,
+  "support.kpi-row": kpiRowBlock,
+  "support.agent-workload": agentWorkloadBlock,
+  "support.recent-activity": recentActivityBlock,
+} as const;
+
+/**
+ * Real ids surfaced to the composer so block configs reference live entities
+ * instead of hallucinated labels. Every scope here corresponds to a config
+ * field, workflow input, or page-state value somewhere in this registry.
+ */
+async function referenceData() {
+  return {
+    ticketStatuses: [
+      { id: "new",      label: "New" },
+      { id: "open",     label: "Open" },
+      { id: "pending",  label: "Pending" },
+      { id: "resolved", label: "Resolved" },
+      { id: "closed",   label: "Closed" },
+    ],
+    priorities: [
+      { id: "low",    label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high",   label: "High" },
+      { id: "urgent", label: "Urgent" },
+    ],
+    channels: [
+      { id: "email", label: "Email" },
+      { id: "slack", label: "Slack" },
+      { id: "web",   label: "Web" },
+    ],
+    plans: [
+      { id: "starter",    label: "Starter" },
+      { id: "growth",     label: "Growth" },
+      { id: "enterprise", label: "Enterprise" },
+    ],
+    agentIds: db.agents.list({ activeOnly: false }).map((a) => ({ id: a.id, label: a.name })),
+    accountIds: db.accounts.list({ pageSize: 100 }).rows.map((a) => ({ id: a.id, label: a.name })),
+  };
+}
+
+/**
+ * Demo placeholder: trusts the `X-Composoft-User` header. Anyone calling the
+ * API can claim to be anyone. Replace with a real session/JWT check before
+ * deploying. Returning null becomes a 401.
+ */
+const authenticate: AuthenticateFn = async (request) => {
+  const userId = request.headers.get("X-Composoft-User");
+  if (!userId) return null;
+  const identity: Identity = {
+    userId,
+    claims: { source: "header" },
+  };
+  return identity;
+};
+
+/**
+ * Demo placeholder: allows everything but logs the request shape so adopters
+ * can see what arrives. Replace with real role/scope checks before deploying.
+ */
+const authorize: AuthorizeFn = async (identity, request) => {
+  const target = request.kind === "action" ? request.workflowId : request.adapterId;
+  console.log(`[support authorize] user=${identity.userId} kind=${request.kind} target=${target}`);
+  return true;
+};
+
+export const registry: Registry = {
+  name: "{{registryName}}",
+  version: "{{registryVersion}}",
+  adapters,
+  workflows,
+  blocks,
+  referenceData,
+  authenticate,
+  authorize,
+  product: {
+    name: "Inbox",
+    accentColor: "#3b82f6",
+    navigation: [
+      { label: "Inbox",    path: "/",         icon: "Inbox" },
+      { label: "Tickets",  path: "/tickets",  icon: "MessageSquare" },
+      { label: "Accounts", path: "/accounts", icon: "Building2" },
+      { label: "Agents",   path: "/agents",   icon: "Users" },
+    ],
+  },
+};
+
+export type SupportRegistry = typeof registry;
+
+export { db } from "./db.js";

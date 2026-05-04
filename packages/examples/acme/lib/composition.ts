@@ -35,8 +35,8 @@ export const composition: Composition = {
     },
     {
       "path": "/pipeline",
-      "title": "Deals",
-      "subtitle": "Active deals across the pipeline.",
+      "title": "Deal pipeline",
+      "subtitle": "Converted deals across active stages.",
       "blocks": [
         {
           "id": "crm.deal-pipeline",

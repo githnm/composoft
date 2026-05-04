@@ -1,0 +1,107 @@
+import type { Identity, Registry } from "@composoft/spec";
+
+import { eventTypesList } from "./adapters/event-types-list.js";
+import { eventTypesById } from "./adapters/event-types-by-id.js";
+import { bookingsList } from "./adapters/bookings-list.js";
+import { bookingsById } from "./adapters/bookings-by-id.js";
+import { bookingsUpcoming } from "./adapters/bookings-upcoming.js";
+import { hostsList } from "./adapters/hosts-list.js";
+import { customersList } from "./adapters/customers-list.js";
+
+import { bookingsCreate } from "./workflows/bookings-create.js";
+import { bookingsCancel } from "./workflows/bookings-cancel.js";
+import { bookingsReschedule } from "./workflows/bookings-reschedule.js";
+
+import { eventTypeGridBlock } from "./blocks/event-type-grid.js";
+import { calendarViewBlock } from "./blocks/calendar-view.js";
+import { upcomingListBlock } from "./blocks/upcoming-list.js";
+import { bookingDetailBlock } from "./blocks/booking-detail.js";
+import { metricsCardsBlock } from "./blocks/metrics-cards.js";
+
+import { db } from "./db.js";
+
+export const adapters = {
+  "event-types.list": eventTypesList,
+  "event-types.by-id": eventTypesById,
+  "bookings.list": bookingsList,
+  "bookings.by-id": bookingsById,
+  "bookings.upcoming": bookingsUpcoming,
+  "hosts.list": hostsList,
+  "customers.list": customersList,
+} as const;
+
+export const workflows = {
+  "bookings.create": bookingsCreate,
+  "bookings.cancel": bookingsCancel,
+  "bookings.reschedule": bookingsReschedule,
+} as const;
+
+export const blocks = {
+  "booking.event-type-grid": eventTypeGridBlock,
+  "booking.calendar-view": calendarViewBlock,
+  "booking.upcoming-list": upcomingListBlock,
+  "booking.booking-detail": bookingDetailBlock,
+  "booking.metrics-cards": metricsCardsBlock,
+} as const;
+
+/**
+ * Real ids surfaced to the composer so block configs reference live entities
+ * instead of guessing labels.
+ */
+async function referenceData() {
+  return {
+    eventTypeColors: [
+      { id: "emerald", label: "Emerald" },
+      { id: "blue",    label: "Blue" },
+      { id: "purple",  label: "Purple" },
+      { id: "amber",   label: "Amber" },
+      { id: "rose",    label: "Rose" },
+      { id: "indigo",  label: "Indigo" },
+    ],
+    bookingStatuses: [
+      { id: "confirmed", label: "Confirmed" },
+      { id: "cancelled", label: "Cancelled" },
+      { id: "completed", label: "Completed" },
+    ],
+    hostIds: db.hosts.list().map((h) => ({ id: h.id, label: h.name })),
+  };
+}
+
+/** Demo placeholder. Replace before deploying — see the README. */
+async function authenticate(request: Request): Promise<Identity | null> {
+  const userId = request.headers.get("X-Composoft-User");
+  if (!userId) return null;
+  return { userId, claims: {} };
+}
+
+/** Demo placeholder. Allows everything; logs the request. */
+async function authorize(identity: Identity, request: { kind: string }): Promise<boolean> {
+  console.log(`[booking authorize] user=${identity.userId} kind=${request.kind}`);
+  return true;
+}
+
+export const registry: Registry = {
+  name: "{{registryName}}",
+  version: "{{registryVersion}}",
+  adapters,
+  workflows,
+  blocks,
+  referenceData,
+  authenticate,
+  authorize,
+  product: {
+    name: "Booklet",
+    accentColor: "#10b981",
+    navigation: [
+      { label: "Calendar",    path: "/",            icon: "Calendar" },
+      { label: "Event types", path: "/event-types", icon: "Layers" },
+      { label: "Bookings",    path: "/bookings",    icon: "CalendarCheck" },
+      { label: "Customers",   path: "/customers",   icon: "Users" },
+      { label: "Hosts",       path: "/hosts",       icon: "UserCircle" },
+    ],
+  },
+};
+
+export type BookingRegistry = typeof registry;
+
+export { db } from "./db.js";
