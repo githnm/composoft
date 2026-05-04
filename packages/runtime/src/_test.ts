@@ -8,6 +8,8 @@ import {
   PathResolutionError,
   readPath,
   resolveDataSlots,
+  resolveOneSlot,
+  resolveParamSource,
   validateComposition,
   _resetAuthWarningForTests,
 } from "./index.js";
@@ -46,6 +48,122 @@ expectThrow(() => readPath(null, "a"), "null", "readPath: null root");
 expectThrow(() => readPath(undefined, "a"), "undefined", "readPath: undefined root");
 expectThrow(() => readPath({ a: 1 }, "a.b"), "from number", "readPath: scalar mid-path");
 expectThrow(() => readPath({}, ""), "empty path", "readPath: empty path");
+
+// --- resolveParamSource: dotted from-page-state paths ---
+// These cases shadow the readPath tests above but exercise the
+// public `resolveParamSource` API end-to-end. Cold-user testing on
+// alpha.5 surfaced a Zod failure caused by a *template* writing the
+// wrong-shape value to page state; these tests document the runtime's
+// correct behavior so the next regression points the finger at the
+// caller, not the resolver.
+assert(
+  resolveParamSource(
+    { kind: "from-page-state", path: "selection.ticketId" },
+    {},
+    {},
+    { selection: { ticketId: "tkt_001" } },
+  ) === "tkt_001",
+  "resolveParamSource: selection.ticketId returns leaf string",
+);
+assert(
+  resolveParamSource(
+    { kind: "from-page-state", path: "a.b.c" },
+    {},
+    {},
+    { a: { b: { c: 42 } } },
+  ) === 42,
+  "resolveParamSource: deep nested numeric leaf",
+);
+assert(
+  resolveParamSource(
+    { kind: "from-page-state", path: "missing.key" },
+    {},
+    {},
+    {},
+  ) === undefined,
+  "resolveParamSource: missing path returns undefined (no throw)",
+);
+assert(
+  resolveParamSource(
+    { kind: "from-page-state", path: "selection.ticketId" },
+    {},
+    {},
+    undefined,
+  ) === undefined,
+  "resolveParamSource: undefined page state returns undefined",
+);
+// And the regression for the alpha.5 bug: if some block wrote
+// `{ ticketId: "tkt_001" }` AT path `selection.ticketId` (instead of
+// the leaf string), readers receive the OBJECT — exactly the failure
+// the cold-user hit. The resolver's job is to surface the value at
+// the path verbatim; the bug was upstream in the writer's call shape.
+assert(
+  (() => {
+    const v = resolveParamSource(
+      { kind: "from-page-state", path: "selection.ticketId" },
+      {},
+      {},
+      { selection: { ticketId: { ticketId: "tkt_001" } } },
+    );
+    return (
+      typeof v === "object" &&
+      v !== null &&
+      (v as Record<string, unknown>).ticketId === "tkt_001"
+    );
+  })(),
+  "resolveParamSource: wrong-shape page state surfaces wrong-shape value (caller responsibility, not runtime)",
+);
+
+// --- resolveOneSlot: integration test with dotted from-page-state ---
+const oneSlotEchoAdapter = defineAdapter({
+  id: "test.echo-required-2",
+  version: "0.1.0",
+  description: "Echoes a required value.",
+  params: z.object({ value: z.string() }),
+  output: z.object({ echoed: z.string() }),
+  run: async ({ value }) => ({ echoed: value }),
+});
+
+const oneSlotBlock = defineBlock({
+  id: "test.one-slot",
+  version: "0.1.0",
+  description: "Single from-page-state slot for resolveOneSlot integration.",
+  config: z.object({}),
+  data: {
+    selected: {
+      adapter: "test.echo-required-2",
+      params: { value: { kind: "from-page-state", path: "selection.ticketId" } },
+    },
+  },
+  actions: {},
+  component: () => null,
+});
+
+const oneSlotResolved = await resolveOneSlot(
+  oneSlotBlock,
+  "selected",
+  { adapters: { "test.echo-required-2": oneSlotEchoAdapter } },
+  {},
+  {},
+  { selection: { ticketId: "tkt_007" } },
+);
+assert(
+  (oneSlotResolved as { echoed: string }).echoed === "tkt_007",
+  `resolveOneSlot integration: expected echoed=tkt_007, got ${JSON.stringify(oneSlotResolved)}`,
+);
+
+const oneSlotSkipped = await resolveOneSlot(
+  oneSlotBlock,
+  "selected",
+  { adapters: { "test.echo-required-2": oneSlotEchoAdapter } },
+  {},
+  {},
+  {}, // no selection.ticketId → auto-skip
+);
+assert(
+  oneSlotSkipped === null,
+  `resolveOneSlot integration: expected null on missing page state, got ${JSON.stringify(oneSlotSkipped)}`,
+);
 assert(
   (() => {
     try {

@@ -64,6 +64,52 @@ If you forget, `next dev` surfaces a confusing framework error: *"Functions cann
 
 To catch this at the registry level instead of in the generated app, every scaffolded registry's `_test.ts` walks `src/blocks/*.component.tsx` and verifies the first line is the directive. The `@composoft/create` templates ship this check by default.
 
+## Page-state writes: pass the leaf value, not a wrapper object
+
+Every entry in a block's `writes` manifest binds a writer to a dot-delimited path. **The value the component passes to that writer is what lands AT the path verbatim** — the runtime does not unwrap or splat it.
+
+```ts
+// manifest
+writes: {
+  selectTicket: { kind: "page-state", path: "selection.ticketId" },
+}
+
+// component — correct
+writes.selectTicket("tkt_001");
+// page state becomes: { selection: { ticketId: "tkt_001" } }
+
+// component — INCORRECT (cold-user footgun)
+writes.selectTicket({ ticketId: "tkt_001" });
+// page state becomes: { selection: { ticketId: { ticketId: "tkt_001" } } }
+// downstream readers of `selection.ticketId` get the OBJECT and Zod fails.
+```
+
+If you want the writer to set multiple fields atomically, point it one level shallower:
+
+```ts
+// manifest
+writes: {
+  setSelection: { kind: "page-state", path: "selection" },
+}
+
+// component
+writes.setSelection({ ticketId: "tkt_001", accountId: "acc_acme" });
+// page state becomes: { selection: { ticketId: "...", accountId: "..." } }
+// readers of `selection.ticketId` and `selection.accountId` both work.
+```
+
+The writer's TypeScript signature should match what the path expects:
+
+```ts
+// path "selection.ticketId" → leaf value, type is the leaf's type
+type Writes = { selectTicket: PageStateWriter<string> };
+
+// path "selection" → object, type is the full object shape
+type Writes = { setSelection: PageStateWriter<{ ticketId: string; accountId: string }> };
+```
+
+Mismatched writer types compile but fail at runtime when the page-state reader receives an unexpected shape.
+
 ## Versioning
 
 Follows semver. `0.1.0-alpha.x` is the first published series — expect spec-level changes between alpha tags.

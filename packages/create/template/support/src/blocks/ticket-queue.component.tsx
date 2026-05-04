@@ -76,7 +76,7 @@ export function TicketQueueView({ data, writes }: Props) {
                   key={t.id}
                   onClick={() => {
                     setSelectedId(t.id);
-                    writes.selectTicket({ ticketId: t.id });
+                    writes.selectTicket(t.id);
                   }}
                   className={`cursor-pointer ${isSelected ? "bg-blue-50/40" : "hover:bg-slate-50"}`}
                 >

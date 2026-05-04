@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-alpha.6
+
+Fixes a cold-user resolve-route 500 in the support template surfaced on alpha.5.
+
+- Fixed `support/blocks/ticket-queue.component.tsx` to call its page-state writer with the leaf string (`writes.selectTicket(t.id)`) instead of a wrapper object (`writes.selectTicket({ ticketId: t.id })`). The writer is bound to path `selection.ticketId` in the manifest; passing an object placed `{ ticketId: "tkt_001" }` AT that path, so downstream readers received the object and the adapter's Zod parse failed with `Expected string, received object`.
+- Updated `support/blocks/ticket-queue-types.ts` to declare `PageStateWriter<string>` instead of `PageStateWriter<{ ticketId: string }>`. The previous type was internally consistent with the wrong call shape — TypeScript happily compiled both, the bug surfaced only at runtime.
+- Audited every other `writes`-using block in templates (booking, operations) and example registries (registry-example-crm, registry-example-postgres). All of them already pass the leaf value correctly. Only the support template's ticket-queue had the misalignment.
+
 ## 0.1.0-alpha.5
 
 Fixes a cold-user RSC-boundary issue surfaced on alpha.4 against the support template.
