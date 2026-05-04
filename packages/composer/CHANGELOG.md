@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0-alpha.5
+
+Composer now writes `apps/<customer>/.composoft-meta.json` containing brief content, model notes, page structure, and version metadata after every successful compose run. New `composoft inspect` subcommand reads these metadata files across the workspace and surfaces three views: customer table (default), gap frequency aggregation (`--gaps`), and per-customer detail (`<customer>`). FDE meta-view that turns composoft from a one-shot generator into a discoverable record of what customers asked for.
+
+- Compose flow appends one final write at the end. Failures don't fail the run — a warning prints to stderr and the generated app still ships.
+- The metadata schema is documented as the exported `ComposoftMeta` type in `inspect.ts`. Stable shape — adding fields is fine, removing or renaming requires a new alpha.
+- `composoft inspect` (no args) prints a sortable table newest-first: CUSTOMER, BRIEF, PAGES, BLOCKS, NOTES, GENERATED. App directories without metadata sidecars (older composer versions) are skipped silently. Corrupt sidecars are warned and skipped.
+- `composoft inspect --gaps` aggregates `modelNotes` by exact-match string and prints frequency-ranked rows with the customers that flagged each gap. Exact-match grouping is intentional — fuzzy alignment would surface false positives.
+- `composoft inspect <customer>` pretty-prints one customer's full metadata (brief, pages, notes, registry/composer/runtime versions, file count). Match is case-insensitive and trims whitespace.
+- New tests in `packages/composer/src/_test.ts` cover all three views plus the schema validator, empty-directory friendly message, pre-meta apps, and corrupt sidecars. Run via `pnpm --filter @composoft/composer test`.
+
 ## 0.1.0-alpha.4
 
 The generated app's sidebar now strictly filters nav items to those whose path matches a page in the composition. Pre-fix, `product.navigation` was passed through verbatim — so a registry that declared `[Overview, Inventory, Procurement, Vendors, Approvals]` against a single-page brief would render all five sidebar links and 404 on four of them. Post-fix, only the links pointing at composed pages survive into `AppSidebar.tsx`'s `NAV_ITEMS` constant, so cold-test apps like Roastery (single page) show only "Overview" while multi-page Meridian shows the full nav. The pin to `@composoft/runtime` bumps to `^0.1.0-alpha.4` (auto-skip-null fix).

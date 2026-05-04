@@ -1,6 +1,6 @@
 {
   "name": "@composoft/composer",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "CLI that turns a customer brief and a registry into a Composition and a working Next.js 15 app. Calls Claude to produce the composition; validates against the registry; generates code.",
   "license": "MIT",
   "author": "Hoshang Mehta",
@@ -44,6 +44,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx src/_test.ts",
     "shadcn:sync": "node scripts/sync-shadcn.js",
     "compose:brewline": "node dist/cli.js compose --brief fixtures/brewline.md --registry @composoft/registry-example-postgres --customer Brewline --out ../examples/brewline",
     "compose:northwind": "node dist/cli.js compose --brief fixtures/northwind.md --registry @composoft/registry-example-crm --customer Northwind --out ../examples/northwind",
@@ -59,7 +60,8 @@
   "devDependencies": {
     "@composoft/registry-example-crm": "workspace:*",
     "@composoft/registry-example-postgres": "workspace:*",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.0"
   },
   "publishConfig": {
     "access": "public"

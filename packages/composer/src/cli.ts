@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Registry } from "@composoft/spec";
 import { validateComposition } from "@composoft/runtime";
 import { callComposer, resolveModel } from "./claude.js";
@@ -16,6 +17,15 @@ import {
   validateContextPaths,
   validateReferenceIds,
 } from "./validate.js";
+import {
+  type ComposoftMeta,
+  findCustomer,
+  formatCustomerDetail,
+  formatCustomerNotFound,
+  formatGaps,
+  formatTable,
+  loadMetas,
+} from "./inspect.js";
 
 type Args = {
   brief: string;
@@ -57,15 +67,24 @@ function parseArgs(argv: string[]): Args {
 function printUsage(): void {
   console.error(
     [
-      "Usage: composoft compose --brief <path> --registry <package> --out <path> [--customer <name>]",
+      "Usage: composoft <command> [args]",
       "",
+      "Commands:",
+      "  compose --brief <path> --registry <package> --out <path> [--customer <name>]",
+      "                                  Generate a Next.js app from a brief.",
+      "  inspect [<customer>] [--gaps]   Read apps/*/.composoft-meta.json sidecars.",
+      "                                  No args  → table of every generated app.",
+      "                                  --gaps   → model-note frequencies across customers.",
+      "                                  <name>   → full detail for one app.",
+      "",
+      "Compose flags:",
       "  --brief    path to a markdown brief",
       "  --registry name of an installed registry package (e.g. @composoft/registry-example-postgres)",
       "  --out      directory to write the generated Next.js app into",
       "  --customer customer display name shown in the generated app's chrome (e.g. \"Brewline\")",
       "",
       "Env:",
-      "  ANTHROPIC_API_KEY    required",
+      "  ANTHROPIC_API_KEY    required for compose",
       "  COMPOSOFT_MODEL      optional (default: claude-opus-4-7)",
     ].join("\n"),
   );
@@ -158,6 +177,132 @@ async function compose(args: Args): Promise<void> {
     console.log(`     model notes:`);
     for (const note of response.notes) console.log(`       - ${note}`);
   }
+
+  // Write the metadata sidecar last. The generated app is the primary
+  // deliverable; this file is for the FDE meta-view (`composoft inspect`).
+  // If anything goes wrong (disk full, permission, etc.) we warn and
+  // succeed — the brief / composition / app on disk are unaffected.
+  try {
+    const composerVersion = await readComposerVersion();
+    const meta: ComposoftMeta = {
+      customer: args.customer ?? "",
+      briefPath: relative(process.cwd(), briefPath) || briefPath,
+      briefContent: brief,
+      modelNotes: response.notes ?? [],
+      pages: composition.pages.map((p) => ({
+        path: p.path,
+        blockCount: p.blocks.length,
+      })),
+      registry: {
+        name: registry.name,
+        version: registry.version,
+      },
+      composerVersion,
+      // The composer pins runtime to its own version (see generate.ts's
+      // SHADCN_DEP_VERSIONS / runtime entry), so the two move together.
+      runtimeVersion: composerVersion,
+      generatedAt: new Date().toISOString(),
+      filesWritten: result.files.length,
+    };
+    const metaPath = join(resolve(args.out), ".composoft-meta.json");
+    await mkdir(dirname(metaPath), { recursive: true });
+    await writeFile(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf8");
+    console.log(`     metadata: ${relative(process.cwd(), metaPath) || metaPath}`);
+  } catch (e) {
+    console.error(`Could not write metadata: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Read the composer's own package.json at runtime so the metadata sidecar
+ * pins composer/runtime versions accurately. Walks up from this compiled
+ * file (dist/cli.js) to find the package root — same approach generate.ts
+ * uses for its own version stamping.
+ */
+async function readComposerVersion(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  let dir = here;
+  for (;;) {
+    const candidate = join(dir, "package.json");
+    try {
+      const raw = await readFile(candidate, "utf8");
+      const pkg = JSON.parse(raw) as { name?: string; version?: string };
+      if (pkg.name === "@composoft/composer" && typeof pkg.version === "string") {
+        return pkg.version;
+      }
+    } catch {
+      // keep walking
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error("could not locate @composoft/composer package.json to read version");
+    }
+    dir = parent;
+  }
+}
+
+// --- inspect subcommand ----------------------------------------------------
+
+type InspectArgs =
+  | { kind: "default" }
+  | { kind: "gaps" }
+  | { kind: "customer"; needle: string }
+  | { kind: "help" };
+
+function parseInspectArgs(argv: string[]): InspectArgs {
+  if (argv.length === 0) return { kind: "default" };
+  const first = argv[0];
+  if (first === "--help" || first === "-h") return { kind: "help" };
+  if (first === "--gaps") return { kind: "gaps" };
+  if (first !== undefined && first.startsWith("-")) {
+    console.error(`unknown inspect option: ${first}`);
+    return { kind: "help" };
+  }
+  // Anything else is a customer name. Join remaining args so multi-word
+  // customers (`composoft inspect Haldermann & Sons`) work without quoting.
+  return { kind: "customer", needle: argv.join(" ") };
+}
+
+function printInspectUsage(): void {
+  console.error(
+    [
+      "Usage: composoft inspect [<customer>] [--gaps]",
+      "",
+      "Reads apps/*/.composoft-meta.json from the current directory and surfaces:",
+      "  composoft inspect              — table of every generated app (default)",
+      "  composoft inspect --gaps       — model-note frequencies across customers",
+      "  composoft inspect <customer>   — full detail for one app (case-insensitive)",
+    ].join("\n"),
+  );
+}
+
+async function inspect(argv: string[]): Promise<void> {
+  const args = parseInspectArgs(argv);
+  if (args.kind === "help") {
+    printInspectUsage();
+    return;
+  }
+  const metas = await loadMetas(process.cwd());
+  if (args.kind === "default") {
+    console.log(formatTable(metas));
+    return;
+  }
+  if (args.kind === "gaps") {
+    console.log(formatGaps(metas));
+    return;
+  }
+  // customer detail
+  if (metas.length === 0) {
+    console.log("No composoft apps found in ./apps/. Run `composoft compose` first.");
+    return;
+  }
+  const found = findCustomer(metas, args.needle);
+  if (!found) {
+    console.log(formatCustomerNotFound(args.needle, metas));
+    process.exitCode = 1;
+    return;
+  }
+  console.log(formatCustomerDetail(found));
 }
 
 async function main(): Promise<void> {
@@ -165,6 +310,10 @@ async function main(): Promise<void> {
   const command = argv[0];
   if (command === "compose") {
     await compose(parseArgs(argv.slice(1)));
+    return;
+  }
+  if (command === "inspect") {
+    await inspect(argv.slice(1));
     return;
   }
   if (command === "--help" || command === "-h" || command === undefined) {
