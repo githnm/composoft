@@ -227,6 +227,24 @@ defineBlock({
 
 **Registry.** A versioned npm package that exports adapters, workflows, blocks, plus optional product info (branding, navigation), reference data, and auth hooks.
 
+## Migrating an existing codebase
+
+composoft is greenfield-friendly today. Migrating from an existing React 
+app means extracting your reads as adapters, your writes as workflows, 
+and your reusable UI as blocks. There's no automated path yet.
+
+The minimum viable migration:
+1. Catalog your most-used reads and writes
+2. Build a seed registry that wraps them (no backend changes needed)
+3. Extract one self-contained component into a block, consuming from the registry
+4. Shadow-render via composoft inside your existing app to validate
+5. Expand block-by-block
+
+We're working on tooling to automate steps 3 and 4 — an embeddable runtime 
+and an `import` command that drafts block manifests from existing components. 
+Not shipped yet. If this is the bottleneck for your team, open an issue with 
+your codebase shape and we'll prioritize.
+
 ## What's shipped
 
 - Three primitives (adapters, workflows, blocks) with typed manifests.
