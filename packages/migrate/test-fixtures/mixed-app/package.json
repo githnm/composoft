@@ -1,0 +1,11 @@
+{
+  "name": "mixed-app-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "swr": "^2.2.0",
+    "@tanstack/react-query": "^5.0.0"
+  }
+}

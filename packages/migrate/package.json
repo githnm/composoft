@@ -1,0 +1,50 @@
+{
+  "name": "@composoft/migrate",
+  "version": "0.1.0-alpha.1",
+  "description": "Static analyzer + interactive walkthrough that scopes a composoft migration from an existing React/Next.js codebase. v0 of the migration story; future iterations add the block extractor and embeddable runtime.",
+  "license": "MIT",
+  "author": "Hoshang Mehta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/githnm/composoft.git",
+    "directory": "packages/migrate"
+  },
+  "homepage": "https://github.com/githnm/composoft#readme",
+  "bugs": {
+    "url": "https://github.com/githnm/composoft/issues"
+  },
+  "keywords": [
+    "composoft",
+    "migration",
+    "react",
+    "next.js",
+    "static-analysis"
+  ],
+  "type": "module",
+  "main": "./dist/cli.js",
+  "bin": {
+    "composoft-migrate": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx src/_test.ts"
+  },
+  "dependencies": {
+    "ts-morph": "^24.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
