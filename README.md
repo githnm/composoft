@@ -102,19 +102,24 @@ The output is a Next.js 15 app with full chrome (shadcn navbar, sidebar, page he
 
 ## Migrating an existing codebase
 
-If you already have a React/Next.js app with 30+ components and you're sizing what a composoft adoption looks like, [`@composoft/migrate`](packages/migrate) is the v0 of the migration tooling.
+If you already have a React/Next.js app and you're sizing what a composoft adoption looks like, [`@composoft/migrate`](packages/migrate) is the v0 of the migration tooling.
 
 ```bash
+# Static analysis — catalog reads, writes, and components ranked by extraction difficulty
 npx @composoft/migrate@alpha analyze ./your-app
-```
 
-It produces `.composoft-migrate/analysis.json` + `analysis.md` — a ranked list of read patterns (potential adapters), write patterns (potential workflows), and components scored by extraction difficulty. Honest about what it skipped (class components, Redux, server actions, GraphQL).
-
-```bash
+# Interactive walkthrough — accept/reject/skip each candidate, persist decisions
 npx @composoft/migrate@alpha walkthrough ./your-app
+
+# Resume or share progress
+npx @composoft/migrate@alpha status ./your-app
 ```
 
-…runs an interactive flow that walks the candidates one at a time. Single-key decisions, persisted to `state.json` for resume + sharing. The state file is the contract future tools (block extractor, embeddable runtime) will consume in subsequent alphas. See the package's [README](packages/migrate/README.md) for the deep doc.
+`analyze` produces `.composoft-migrate/analysis.json` + `analysis.md` — a ranked list of read patterns (potential adapters), write patterns (potential workflows), and components scored by extraction difficulty. Honest about what it skipped (class components, Redux, server-side Prisma queries, server actions, GraphQL).
+
+`walkthrough` is decision-driven, single-key shortcuts. You accept, reject, or skip each candidate. State persists in `.composoft-migrate/state.json` so you can quit and resume.
+
+The state file is a forward-compatible contract. Future tooling — a block extractor that consumes the queue and drafts refactored components, plus an embeddable runtime that lets composoft blocks render inside an existing React app — reads from the same file. v0 ships analyzer + walkthrough; the rest is on the roadmap.
 
 ## Try the reference examples
 
