@@ -1,20 +1,33 @@
 # composoft
 
-Per-customer software for AI-native B2B companies, generated from a brief.
+Per-customer software from a typed primitive registry
 
 > Alpha. Real but rough. Things will change.
 
 ## What this is
 
-If you build B2B software, your customers want it tailored. Different layouts, different fields, different workflows. The way you solve this today is FDEs. Engineers who fork your main app per customer and hand-edit React for weeks.
+We've been shipping software as an end-to-end product with a fixed UI, customers with different ways of working have to adapt to how the software is set to work. Composoft flips this - software that composes itself to fit how the customer already works - from a natural language brief - keeping key decision decisions, it's orginal form and pritives intact.
 
-composoft replaces hand-edits with composition. You define a typed library of blocks once. Customers get apps generated from natural-language briefs. The library compounds. The bottleneck moves from "FDE time per customer" to "registry expressiveness." A team of 10 can serve 200 customers instead of 30.
+Composoft draws a hard boundary: developers ship stable, typed primitives; AI only composes them per customer, from a natural language brief.
 
-## demo
+It splits software into four typed layers:
+
+- Adapters: typed reads (DB queries / API calls wrapped in schemas)
+- Workflows: typed writes (mutations with input/output schemas)
+- Blocks: React components that declare required adapters + exposed workflows (but don't implement them)
+- Composition: per-customer pages/layout/config/state wiring
+
+You publish the first three layers as a registry. The composer takes a natural-language brief and generates only the composition - so different customers get radically different apps, built from the same primitives, without hand-edits.
+
+## Demo
 
 [![Watch the video](https://img.youtube.com/vi/b-6pQLeG_Ak/0.jpg)](https://www.youtube.com/watch?v=b-6pQLeG_Ak)
 
+Example - Let's say we're a modern ERP software company that sells to mid-market consumer brands. 
+
 Same registry. Two customer briefs. Two genuinely different apps.
+
+Customer 1: Roastery: 
 
 Roastery is a small DTC coffee roaster with one warehouse. Their brief asks for one page: KPIs, low-stock alerts, and a product table. No procurement, no vendors, no approvals.
 
@@ -42,6 +55,7 @@ npx @composoft/composer@alpha compose \
 
 <img width="832" height="467" alt="image" src="https://github.com/user-attachments/assets/39f6b382-ed96-497d-ba32-c117359417f3" />
 
+Customer 2: Meridian Brands
 
 Meridian Brands is a multi-brand consumer goods company with three warehouses, 50+ vendors, formal procurement workflows, and dedicated approval flows. Same registry, completely different brief.
 
@@ -56,12 +70,61 @@ Approvals page: dedicated approval workflow.
 
 <img width="834" height="470" alt="image" src="https://github.com/user-attachments/assets/d61421b3-a4b2-4864-81af-4c5e811fbd6f" />
 
-
 That's the whole pitch. One registry. One engineering team. Many customer apps, each shaped by what that customer actually does.
 
 The composer also surfaces what it couldn't build. If your brief asks for something the registry doesn't support, you get a model note saying so — not a fake button that doesn't work. The framework knows what it can't do, and tells you.
 
+## The four primitives
+
+**Adapter.** A typed read. Takes params, returns rows. Wraps a database query, an API call, or a calculation.
+
+```ts
+defineAdapter({
+  id: "deals.list",
+  params: z.object({ stage: z.string().optional() }),
+  output: z.array(dealSchema),
+  run: async ({ stage }) => db.deals.list({ stage }),
+});
+```
+
+**Workflow.** A typed write. Takes input, performs side effects, returns output.
+
+```ts
+defineWorkflow({
+  id: "deals.move-stage",
+  input: z.object({ dealId: z.string(), stage: z.string() }),
+  output: z.object({ dealId: z.string(), stage: z.string() }),
+  run: async ({ dealId, stage }, context) => {
+    await db.deals.update(dealId, { stage });
+    return { dealId, stage };
+  },
+});
+```
+
+**Block.** A React component plus its data needs and action surface. The unit of UI composition.
+
+```ts
+defineBlock({
+  id: "deals.pipeline",
+  config: z.object({ defaultStage: z.string() }),
+  data: {
+    deals: {
+      adapter: "deals.list",
+      params: { stage: { kind: "from-config", path: "defaultStage" } },
+    },
+  },
+  actions: { moveStage: { workflow: "deals.move-stage" } },
+  writes: { selectedDealId: { kind: "page-state", path: "selection.dealId" } },
+  component: DealPipeline,
+});
+```
+
+**Registry.** A versioned npm package that exports adapters, workflows, blocks, plus optional product info (branding, navigation), reference data, and auth hooks.
+
+
 ## Templates
+
+I built a few templates as well - support tool, calendar booking system, ERP Operations and a Simple To-Do app.
 
 `@composoft/create` ships with four working domain templates:
 
@@ -179,53 +242,6 @@ Model notes (4):
 ```
 
 The framework turns from a one-shot generator into a record of what your customers want.
-
-## The four primitives
-
-**Adapter.** A typed read. Takes params, returns rows. Wraps a database query, an API call, or a calculation.
-
-```ts
-defineAdapter({
-  id: "deals.list",
-  params: z.object({ stage: z.string().optional() }),
-  output: z.array(dealSchema),
-  run: async ({ stage }) => db.deals.list({ stage }),
-});
-```
-
-**Workflow.** A typed write. Takes input, performs side effects, returns output.
-
-```ts
-defineWorkflow({
-  id: "deals.move-stage",
-  input: z.object({ dealId: z.string(), stage: z.string() }),
-  output: z.object({ dealId: z.string(), stage: z.string() }),
-  run: async ({ dealId, stage }, context) => {
-    await db.deals.update(dealId, { stage });
-    return { dealId, stage };
-  },
-});
-```
-
-**Block.** A React component plus its data needs and action surface. The unit of UI composition.
-
-```ts
-defineBlock({
-  id: "deals.pipeline",
-  config: z.object({ defaultStage: z.string() }),
-  data: {
-    deals: {
-      adapter: "deals.list",
-      params: { stage: { kind: "from-config", path: "defaultStage" } },
-    },
-  },
-  actions: { moveStage: { workflow: "deals.move-stage" } },
-  writes: { selectedDealId: { kind: "page-state", path: "selection.dealId" } },
-  component: DealPipeline,
-});
-```
-
-**Registry.** A versioned npm package that exports adapters, workflows, blocks, plus optional product info (branding, navigation), reference data, and auth hooks.
 
 ## Migrating an existing codebase
 
