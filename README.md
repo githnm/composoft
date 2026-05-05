@@ -39,7 +39,6 @@ KPI row: total SKUs, units in stock, low stock count, total value
 Low-stock alerts showing what to reorder
 Product table with current stock levels
 Skip everything procurement-related: vendors, purchase orders, approvals.
-
 ```
 
 One command:
@@ -65,7 +64,6 @@ Overview page: executive view with inventory + procurement KPIs.
 Inventory page: product table, click to see per-location stock and transfer actions.
 Procurement page: PO list, click to approve or receive.
 Approvals page: dedicated approval workflow.
-
 '''
 
 <img width="834" height="470" alt="image" src="https://github.com/user-attachments/assets/d61421b3-a4b2-4864-81af-4c5e811fbd6f" />
