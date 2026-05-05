@@ -1,0 +1,9 @@
+{
+  "name": "prisma-types-only-fixture",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^5.0.0",
+    "next": "15",
+    "react": "19"
+  }
+}

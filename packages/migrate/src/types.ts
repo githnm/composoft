@@ -54,6 +54,13 @@ export type ComponentCandidate = {
     readonly locOfComponent?: number;
     readonly stateHookCount?: number;
     readonly propCount?: number;
+    /**
+     * Hooks the analyzer detected that bump extraction difficulty
+     * beyond what raw `useState`/`useReducer` counts capture. e.g.
+     * `useRef`, `useSession`, `usePathname`, `useRouter`, `useEffect`.
+     * Surfaced in the difficultyReasons text of the markdown report.
+     */
+    readonly detectedComplexitySignals?: readonly string[];
   };
 };
 
@@ -71,6 +78,14 @@ export type Analysis = {
   readonly readCandidates: ReadCandidate[];
   readonly writeCandidates: WriteCandidate[];
   readonly componentCandidates: ComponentCandidate[];
+  /**
+   * Count of components excluded from extraction candidates because
+   * they look like UI library primitives (zero data, no state, 3+
+   * importers, <100 LOC). The analyzer made a deliberate choice to
+   * skip them — surfacing the count in the report so the FDE knows
+   * they weren't missed.
+   */
+  readonly skippedAsPrimitives: number;
   /** Honest list of patterns the analyzer skipped, with reasons. */
   readonly limitations: string[];
 };

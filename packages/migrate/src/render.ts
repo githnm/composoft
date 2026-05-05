@@ -50,7 +50,16 @@ export function renderAnalysisMarkdown(
 
   lines.push("## What this analyzer couldn't see");
   lines.push("");
-  if (analysis.limitations.length === 0) {
+  // The primitive-skip line goes at the top of this section because it's
+  // a deliberate analyzer choice, not a gap in capability — the FDE
+  // should know components were filtered, not missed. Lives above the
+  // limitations bullets so it doesn't get buried in a long list.
+  if (analysis.skippedAsPrimitives > 0) {
+    lines.push(
+      `- Skipped ${analysis.skippedAsPrimitives} component${analysis.skippedAsPrimitives === 1 ? "" : "s"} detected as UI primitives (zero data, no local state, used in 3+ files, <100 LOC). These are library-style building blocks — buttons, badges, dialogs — that adopters typically don't extract as composoft blocks. Re-run with the analyzer source if your codebase needs different thresholds.`,
+    );
+  }
+  if (analysis.limitations.length === 0 && analysis.skippedAsPrimitives === 0) {
     lines.push(
       "Nothing flagged. Every file the analyzer looked at fit one of its supported patterns " +
         "(useSWR / useQuery / fetch + function components). Don't take this as proof there's " +

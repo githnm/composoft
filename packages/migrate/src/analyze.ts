@@ -18,6 +18,7 @@ import {
   Project,
   SyntaxKind,
   type CallExpression,
+  type ImportSpecifier,
   type SourceFile,
 } from "ts-morph";
 import type {
@@ -89,14 +90,28 @@ export async function analyzeCodebase(codebasePath: string): Promise<Analysis> {
   const readCandidates = rankReadCandidates(allReads);
   const writeCandidates = rankWriteCandidates(allWrites);
 
+  // Build an import graph: for every named import across every file,
+  // remember which files imported that name. Used by the primitive
+  // detector below to count importers without resolving file paths.
+  const importerCounts = buildImporterCounts(project.getSourceFiles(), root);
+
   // Map each component to the reads/writes it consumes by file path.
-  const componentCandidates = buildComponentCandidates(
+  const allCandidates = buildComponentCandidates(
     componentFunctions,
     allReads,
     allWrites,
     readCandidates,
     writeCandidates,
   );
+
+  // Filter out UI-primitive components (zero data, no state, used in
+  // 3+ other files, <100 LOC). These are library primitives — buttons,
+  // badges, dialogs — that adopters never want to extract as blocks.
+  // The threshold of 3+ importers is the primary signal; LOC + lack
+  // of state are guardrails against falsely flagging a small feature
+  // component that happens to be imported widely.
+  const { kept: componentCandidates, skipped: skippedAsPrimitives } =
+    filterPrimitives(allCandidates, importerCounts);
 
   // Update component count post-collection — totalFiles already comes
   // from the cheap readCodebaseShape call.
@@ -107,8 +122,115 @@ export async function analyzeCodebase(codebasePath: string): Promise<Analysis> {
     readCandidates,
     writeCandidates,
     componentCandidates,
+    skippedAsPrimitives,
     limitations,
   };
+}
+
+/**
+ * Build a map of `componentName → number of OTHER files that import it`.
+ * Walks every file's import declarations and counts named imports.
+ *
+ * Heuristic — we don't resolve module specifiers to actual files. Two
+ * unrelated files that both have a function named `Button` (e.g. one
+ * in `components/ui/button` and one in `vendor/legacy/Button.tsx`) would
+ * be conflated. In practice, projects use unique component names; the
+ * count is good enough to drive the primitive-detection filter and
+ * underestimates rather than overestimates.
+ */
+function buildImporterCounts(
+  files: SourceFile[],
+  root: string,
+): Map<string, Set<string>> {
+  const counts = new Map<string, Set<string>>();
+  for (const sf of files) {
+    const fp = relative(root, sf.getFilePath());
+    for (const imp of sf.getImportDeclarations()) {
+      for (const named of imp.getNamedImports()) {
+        const name = named.getName();
+        let s = counts.get(name);
+        if (!s) {
+          s = new Set<string>();
+          counts.set(name, s);
+        }
+        s.add(fp);
+      }
+    }
+  }
+  return counts;
+}
+
+/**
+ * Component name patterns that always survive the primitive filter,
+ * regardless of structural signals.
+ *
+ * Defensive safety net: if upstream detection misses a component's
+ * data layer (URL parser bails on an exotic shape, the fetch is hidden
+ * behind a custom hook the analyzer doesn't follow, the read happens
+ * in a parent and is passed down via props), the structural primitive
+ * signals can fire on a real feature component. Hiding a feature
+ * component is far worse than surfacing a misnamed primitive — the
+ * FDE can see a `Badge` in the candidate list and skip it; they can't
+ * discover an `Editor` we silently dropped.
+ *
+ * The patterns cover the common real-world feature-component naming
+ * conventions: `Editor`, `*Form`, `*Detail`, `*List`, `*Page`,
+ * `*Operations`, `*Layout`, plus `Settings`/`Profile`/`Sidebar`
+ * substrings. Tuned conservatively — we'd rather let one too many
+ * components through than filter a real feature.
+ */
+const KNOWN_FEATURE_PATTERNS: readonly RegExp[] = [
+  /^Editor$/,
+  /^[A-Z][a-z]+Form$/,
+  /^[A-Z][a-z]+Detail$/,
+  /^[A-Z][a-z]+List$/,
+  /^[A-Z][a-z]+Page$/,
+  /^[A-Z][a-z]+Operations$/,
+  /^[A-Z][a-z]+Layout$/,
+  /Settings/,
+  /Profile/,
+  /Sidebar/,
+];
+
+function isKnownFeatureName(name: string): boolean {
+  for (const re of KNOWN_FEATURE_PATTERNS) {
+    if (re.test(name)) return true;
+  }
+  return false;
+}
+
+function filterPrimitives(
+  components: ComponentCandidate[],
+  importerCounts: Map<string, Set<string>>,
+): { kept: ComponentCandidate[]; skipped: number } {
+  const PRIMITIVE_IMPORTER_THRESHOLD = 3;
+  const PRIMITIVE_LOC_CEILING = 100;
+  const kept: ComponentCandidate[] = [];
+  let skipped = 0;
+  for (const c of components) {
+    // Name-pattern safety net first: if the component's name matches a
+    // known feature pattern, never filter it as a primitive — even if
+    // the structural signals (zero data + no state + widely imported +
+    // small LOC) all fire. See KNOWN_FEATURE_PATTERNS for rationale.
+    if (isKnownFeatureName(c.componentName)) {
+      kept.push(c);
+      continue;
+    }
+    const importers = importerCounts.get(c.componentName)?.size ?? 0;
+    const loc = c.metadata?.locOfComponent ?? 0;
+    const noData = c.consumesReads.length === 0 && c.consumesWrites.length === 0;
+    const noState =
+      !c.hasLocalState &&
+      (c.metadata?.detectedComplexitySignals?.length ?? 0) === 0;
+    const widelyImported = importers >= PRIMITIVE_IMPORTER_THRESHOLD;
+    const small = loc > 0 && loc < PRIMITIVE_LOC_CEILING;
+    if (noData && noState && widelyImported && small) {
+      skipped++;
+      continue;
+    }
+    kept.push(c);
+  }
+  return { kept, skipped };
 }
 
 // --- codebase shape --------------------------------------------------------
@@ -197,6 +319,23 @@ function walkDir(dir: string, out: string[]): void {
 
 // --- limitations: what we can't analyze -----------------------------------
 
+/**
+ * Walk every source file and collect honest "we couldn't analyze this"
+ * notes by category. Grouping by category in the output keeps the
+ * limitations section readable when a real codebase has many of each.
+ *
+ * The detected categories cover the gap between the analyzer's
+ * supported patterns (function components + useSWR / useQuery / fetch)
+ * and what real Next.js 13+ codebases actually use:
+ *   - class components
+ *   - Redux state stores
+ *   - Server actions (`"use server"`)
+ *   - GraphQL clients
+ *   - Prisma / server-side database queries
+ *   - Async server components in `app/`
+ *   - `next/headers` cookies/headers reads
+ *   - Deep custom hook chains
+ */
 function detectGlobalLimitations(
   files: SourceFile[],
   root: string,
@@ -204,8 +343,11 @@ function detectGlobalLimitations(
 ): void {
   let classComponentCount = 0;
   let reduxFiles = 0;
-  let serverActionFiles = 0;
   let graphqlFiles = 0;
+  const serverActionFiles: string[] = [];
+  const prismaFiles: string[] = [];
+  const asyncServerComponentFiles: string[] = [];
+  const nextHeadersFiles: string[] = [];
   const deepHookFiles: string[] = [];
 
   for (const sf of files) {
@@ -234,9 +376,12 @@ function detectGlobalLimitations(
       reduxFiles++;
     }
 
-    // Server actions: a "use server" directive anywhere.
-    if (/^["']use server["']/m.test(text)) {
-      serverActionFiles++;
+    // Server actions: `"use server"` directive at file or function scope.
+    // Only flag actual directive lines (string-literal expression statements
+    // at the top of the file or function body) so a comment / code that
+    // happens to mention the phrase doesn't trigger.
+    if (hasUseServerDirective(sf)) {
+      serverActionFiles.push(fp);
     }
 
     // GraphQL clients: any import from @apollo/client, urql, react-relay.
@@ -252,6 +397,55 @@ function detectGlobalLimitations(
       })
     ) {
       graphqlFiles++;
+    }
+
+    // Prisma: a file is "server-side Prisma" only if both an
+    // @prisma/client runtime binding is in scope AND a Prisma call
+    // shape exists in the file. Type-only imports (`import type { Post
+    // } from "@prisma/client"`, or named imports used only in type
+    // positions) do not exclude. See fileUsesPrismaAtRuntime for the
+    // full rule.
+    if (fileUsesPrismaAtRuntime(sf)) {
+      prismaFiles.push(fp);
+    }
+
+    // next/headers: server-only auth/header reads.
+    if (
+      sf.getImportDeclarations().some((d) => {
+        const m = d.getModuleSpecifierValue();
+        return m === "next/headers";
+      })
+    ) {
+      nextHeadersFiles.push(fp);
+    }
+
+    // Async server components: files under app/ that export an async
+    // default function. The Next.js 13+ idiom for server-side data
+    // fetching at the page boundary.
+    if (fp.startsWith("app/") || fp.includes("/app/")) {
+      const def = sf.getDefaultExportSymbol();
+      void def;
+      // Look at default export: function declaration with async modifier,
+      // or a default-exported variable bound to an async arrow.
+      for (const fn of sf.getFunctions()) {
+        if (fn.isDefaultExport() && fn.isAsync()) {
+          asyncServerComponentFiles.push(fp);
+          break;
+        }
+      }
+      // export default async function Page(...) { ... } may appear as
+      // an ExportAssignment with an async function expression too.
+      for (const exp of sf.getExportAssignments()) {
+        const expr = exp.getExpression();
+        const k = expr.getKind();
+        if (
+          (k === SyntaxKind.ArrowFunction || k === SyntaxKind.FunctionExpression) &&
+          /^\s*async\b/.test(expr.getText())
+        ) {
+          asyncServerComponentFiles.push(fp);
+          break;
+        }
+      }
     }
 
     // Deep custom hooks: a function whose name starts with `use` and
@@ -276,14 +470,33 @@ function detectGlobalLimitations(
       `Skipped Redux state management in ${reduxFiles} file${reduxFiles === 1 ? "" : "s"} — Redux selectors and actions are out of scope for v1; only React-hook-driven reads + writes are analyzed.`,
     );
   }
-  if (serverActionFiles > 0) {
-    limitations.push(
-      `Detected "use server" directives in ${serverActionFiles} file${serverActionFiles === 1 ? "" : "s"} — Next.js server actions are not analyzed in v1.`,
-    );
-  }
+  pushFileGroup(
+    limitations,
+    "Server actions",
+    serverActionFiles,
+    "server actions are not analyzed in v1; the analyzer only sees client-side reads and writes",
+  );
+  pushFileGroup(
+    limitations,
+    "Prisma server-side queries",
+    prismaFiles,
+    "server-side data layer not analyzed in v1; reads through Prisma won't appear as adapter candidates",
+  );
+  pushFileGroup(
+    limitations,
+    "Async server components",
+    asyncServerComponentFiles,
+    "Next.js 13+ async server components are not analyzed in v1; data fetched at the page boundary won't appear",
+  );
+  pushFileGroup(
+    limitations,
+    "next/headers usage",
+    nextHeadersFiles,
+    "server-only auth/header reads are not analyzed in v1",
+  );
   if (graphqlFiles > 0) {
     limitations.push(
-      `Detected GraphQL client imports in ${graphqlFiles} file${graphqlFiles === 1 ? "" : "s"} — Apollo / urql / Relay are not analyzed in v1; reads through GraphQL won't appear as adapter candidates.`,
+      `GraphQL client imports detected in ${graphqlFiles} file${graphqlFiles === 1 ? "" : "s"} — Apollo / urql / Relay are not analyzed in v1; reads through GraphQL won't appear as adapter candidates.`,
     );
   }
   const uniqueDeep = Array.from(new Set(deepHookFiles));
@@ -292,6 +505,230 @@ function detectGlobalLimitations(
       `Custom hooks deeper than two levels detected in ${uniqueDeep.length} file${uniqueDeep.length === 1 ? "" : "s"}: ${uniqueDeep.slice(0, 5).join(", ")}${uniqueDeep.length > 5 ? ", …" : ""}. The reads/writes through them may show as separate candidates rather than aggregated.`,
     );
   }
+}
+
+/**
+ * Render a category as one limitations[] entry: `<Title> in N file(s):
+ * <list> — <reason>`. Truncates the file list to the first 5 with an
+ * ellipsis so the markdown stays scannable on real codebases.
+ */
+function pushFileGroup(
+  limitations: string[],
+  title: string,
+  files: string[],
+  reason: string,
+): void {
+  const unique = Array.from(new Set(files));
+  if (unique.length === 0) return;
+  const head = unique.slice(0, 5).join(", ");
+  const more = unique.length > 5 ? `, … (${unique.length - 5} more)` : "";
+  limitations.push(
+    `${title} in ${unique.length} file${unique.length === 1 ? "" : "s"}: ${head}${more}. ${reason}.`,
+  );
+}
+
+/**
+ * `"use server"` directive detection. Matches the directive at the top
+ * of a file (`"use server"\n` as first executable statement) or the top
+ * of any function body. Avoids false positives on string literals
+ * appearing elsewhere in code.
+ */
+function hasUseServerDirective(sf: SourceFile): boolean {
+  const stmts = sf.getStatements();
+  if (
+    stmts.length > 0 &&
+    Node.isExpressionStatement(stmts[0]!) &&
+    /^["']use server["']\s*;?$/.test(stmts[0]!.getText().trim())
+  ) {
+    return true;
+  }
+  // Function-scope directives.
+  for (const fn of sf.getFunctions()) {
+    const body = fn.getBody();
+    if (!body || !Node.isBlock(body)) continue;
+    const first = body.getStatements()[0];
+    if (
+      first &&
+      Node.isExpressionStatement(first) &&
+      /^["']use server["']\s*;?$/.test(first.getText().trim())
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Distinguish a file that runs Prisma server-side queries from one that
+ * just imports Prisma TYPES for prop interfaces.
+ *
+ * Real-world testing on shadcn/taxonomy surfaced a false positive in the
+ * alpha.2 rule: feature components that did `import { Post } from
+ * "@prisma/client"` for prop typing were excluded as "Prisma server-side"
+ * even though the import was purely structural — Post was used in
+ * `interface Props { post: Post }`, never as a value.
+ *
+ * The corrected rule: a file is server-side Prisma ONLY if it both
+ *   (1) has at least one `@prisma/client` import binding USED at
+ *       runtime (not just in type positions), AND
+ *   (2) actually performs a Prisma call shape — `prisma.<model>.<method>(...)`,
+ *       any client-aliased call (`db.user.findMany()`, etc.), or
+ *       `new PrismaClient(...)`.
+ *
+ * Either condition alone is insufficient. Type-only import without
+ * runtime call → not server-side, keep file in candidate analysis. A
+ * runtime symbol declared but never used in a Prisma call → don't
+ * penalize the file (false-negatives are cheaper than false-positives;
+ * the FDE can decide). Both conditions → exclude from candidate
+ * analysis and flag in `limitations[]`.
+ */
+function fileUsesPrismaAtRuntime(sf: SourceFile): boolean {
+  const prismaImports = sf
+    .getImportDeclarations()
+    .filter((d) => d.getModuleSpecifierValue() === "@prisma/client");
+  if (prismaImports.length === 0) return false;
+
+  // Step 1: any binding used at runtime?
+  const anyRuntimeBinding = prismaImports.some((d) => {
+    // `import type { ... } from "@prisma/client"` is unambiguously type-only.
+    if (d.isTypeOnly()) return false;
+    // Default and namespace imports are runtime-shaped (you can't have
+    // an `import type ns from`/`import type * as ns`). Bias toward "yes
+    // this is runtime" — step 2's call-shape check is the gate.
+    if (d.getDefaultImport()) return true;
+    if (d.getNamespaceImport()) return true;
+    // Named imports: each is either marked `type` (skip) or used in a
+    // type or value position (walk references).
+    for (const ni of d.getNamedImports()) {
+      if (ni.isTypeOnly()) continue;
+      if (isImportSpecifierUsedAtRuntime(ni)) return true;
+    }
+    return false;
+  });
+  if (!anyRuntimeBinding) return false;
+
+  // Step 2: actual Prisma call shape in the file?
+  return hasPrismaRuntimeCall(sf);
+}
+
+/**
+ * Quick text-level check for Prisma-shaped runtime calls. Cheaper than
+ * walking every CallExpression and checking the receiver chain. The
+ * regexes accept both `prisma.user.findMany()` and `db.user.findMany()`
+ * style aliasing (the receiver name doesn't have to be exactly
+ * `prisma`) — Prisma's documented API is `<client>.<model>.<method>(...)`.
+ *
+ * Also accepts `new PrismaClient()`: a file constructing the Prisma
+ * client itself counts as runtime usage even if it doesn't make a call
+ * in the same file (typical for `lib/db.ts` shapes).
+ */
+function hasPrismaRuntimeCall(sf: SourceFile): boolean {
+  const text = sf.getFullText();
+  // <client>.<model>.<method>(...) — the canonical Prisma call shape.
+  // We accept any `<lowerIdent>.<lowerIdent>.<knownPrismaMethod>` so
+  // aliased clients (`db.post.findMany()`, `client.user.create()`) are
+  // recognized too.
+  const PRISMA_METHODS =
+    "findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|create|update|delete|upsert|count|aggregate|groupBy|createMany|updateMany|deleteMany";
+  const callRe = new RegExp(
+    `\\b[a-z_$][\\w$]*\\.[a-zA-Z_$][\\w$]*\\.(?:${PRISMA_METHODS})\\b`,
+  );
+  if (callRe.test(text)) return true;
+  // new PrismaClient(...) — direct client construction.
+  if (/\bnew\s+PrismaClient\b/.test(text)) return true;
+  return false;
+}
+
+/**
+ * Check whether an `import { X } from "@prisma/client"` binding is
+ * referenced anywhere in the file at a runtime (value) position.
+ *
+ * Strategy: find every reference to the binding's local name, then for
+ * each reference walk up the parent chain. If we hit a TypeNode before
+ * any value-position container, the reference is type-only. If we
+ * reach a non-TypeNode parent (CallExpression, NewExpression, property
+ * access target, JSX expression, return value, etc.) without crossing
+ * a TypeNode, it's a runtime use.
+ *
+ * Errs toward "type-only" when the AST is ambiguous — undercounting
+ * runtime use means we keep more files in candidate analysis, which is
+ * the safer side.
+ */
+function isImportSpecifierUsedAtRuntime(ni: ImportSpecifier): boolean {
+  // The "local name" of an import specifier is what the file uses to
+  // refer to it: `import { X as Y } from "..."` → Y. ts-morph's
+  // getNameNode() returns the identifier or string-literal of the
+  // imported binding; we want the alias if any, falling back to the
+  // imported name. Both expose findReferencesAsNodes via the symbol
+  // resolver, but only on Identifier — string-literal imports
+  // (`import { "type" as foo }`) are too rare to bother with.
+  const aliasNode = ni.getAliasNode();
+  const target = aliasNode ?? ni.getNameNode();
+  if (!Node.isIdentifier(target)) return false;
+  let refs: Node[];
+  try {
+    refs = target.findReferencesAsNodes();
+  } catch {
+    // Symbol resolution can fail on partially-typed projects; fall
+    // back to "not runtime" so we don't false-positive.
+    return false;
+  }
+  for (const ref of refs) {
+    // Skip the declaration itself.
+    if (ref === target) continue;
+    if (!isInTypeOnlyPosition(ref)) return true;
+  }
+  return false;
+}
+
+/**
+ * Walk up from a node and decide whether it's contained in a type
+ * position (TypeReference, type alias, interface body, etc.) before
+ * reaching a value-position ancestor.
+ */
+function isInTypeOnlyPosition(node: Node): boolean {
+  let p: Node | undefined = node.getParent();
+  while (p) {
+    if (Node.isTypeNode(p)) return true;
+    // ImportSpecifier itself is the declaration site — type-only by
+    // construction (the binding name in the import declaration).
+    if (Node.isImportSpecifier(p)) return true;
+    // Stop at structural value-statement boundaries. If we got here
+    // without hitting a TypeNode, the reference is in a runtime
+    // position.
+    if (
+      Node.isCallExpression(p) ||
+      Node.isNewExpression(p) ||
+      Node.isPropertyAccessExpression(p) ||
+      Node.isElementAccessExpression(p) ||
+      Node.isVariableDeclaration(p) ||
+      Node.isPropertyAssignment(p) ||
+      Node.isShorthandPropertyAssignment(p) ||
+      Node.isReturnStatement(p) ||
+      Node.isThrowStatement(p) ||
+      Node.isExpressionStatement(p) ||
+      Node.isJsxExpression(p) ||
+      Node.isJsxElement(p) ||
+      Node.isJsxOpeningElement(p) ||
+      Node.isJsxSelfClosingElement(p) ||
+      Node.isBinaryExpression(p) ||
+      Node.isConditionalExpression(p) ||
+      Node.isArrayLiteralExpression(p) ||
+      Node.isObjectLiteralExpression(p) ||
+      Node.isTemplateExpression(p) ||
+      Node.isAsExpression(p) ||
+      Node.isSatisfiesExpression(p)
+    ) {
+      // AsExpression and SatisfiesExpression have a type-position child
+      // (the type) and a value-position child (the expression). If the
+      // node we walked up from was the TYPE side, we'd have hit the
+      // TypeNode check first, so reaching here means it's the value
+      // side.
+      return false;
+    }
+    p = p.getParent();
+  }
+  return false;
 }
 
 function getCustomHookDeclarations(sf: SourceFile): Node[] {
@@ -391,6 +828,37 @@ function isInLegacyOrStore(sf: SourceFile, root: string): boolean {
   ) {
     return true;
   }
+  // Prisma-using file: server-side. The reads through Prisma aren't
+  // client-side adapters; treating them as such would produce noise.
+  // The limitations[] entry surfaces what was skipped.
+  //
+  // CRITICAL: `import { Post } from "@prisma/client"` for prop typing
+  // is NOT server-side. Excluding it dropped feature components like
+  // Editor / PostOperations / UserNameForm from candidate analysis in
+  // alpha.2 + alpha.3 against shadcn/taxonomy. `fileUsesPrismaAtRuntime`
+  // distinguishes type-only imports from runtime usage; only the
+  // latter trips this exclusion.
+  if (fileUsesPrismaAtRuntime(sf)) {
+    return true;
+  }
+  // Server actions file ("use server" at file scope) — not a client component.
+  if (hasUseServerDirective(sf)) {
+    return true;
+  }
+  // Async server component file: an async default export under app/.
+  // These do server-side data fetching at the page boundary, not the
+  // client-side data-layer patterns the analyzer understands.
+  if (rel.startsWith("app/") || rel.includes("/app/")) {
+    for (const fn of sf.getFunctions()) {
+      if (fn.isDefaultExport() && fn.isAsync()) return true;
+    }
+  }
+  // next/headers user — server context, not client.
+  if (
+    sf.getImportDeclarations().some((d) => d.getModuleSpecifierValue() === "next/headers")
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -425,7 +893,15 @@ type ComponentFunction = {
   loc: number;
   propCount: number;
   hasComplexProps: boolean;
+  /** useState + useReducer count. Pure local-state count. */
   stateHookCount: number;
+  /**
+   * Other complexity-bumping signals detected inside the component:
+   * useRef, useEffect, useSession, usePathname, useRouter, useParams,
+   * useSearchParams, useMemo/useCallback with non-trivial deps, etc.
+   * Each entry is the hook name as it appears at the call site.
+   */
+  complexitySignals: string[];
 };
 
 function visitFile(
@@ -488,6 +964,7 @@ function componentMetadata(
   const loc = end - start + 1;
   const props = analyzeProps(fn);
   const stateHookCount = countStateHooks(fn);
+  const complexitySignals = detectComplexitySignals(fn);
   return {
     file,
     componentName,
@@ -497,7 +974,70 @@ function componentMetadata(
     propCount: props.count,
     hasComplexProps: props.complex,
     stateHookCount,
+    complexitySignals,
   };
+}
+
+/**
+ * Detect hook calls that bump extraction difficulty even when the
+ * raw `useState`/`useReducer` count is zero. Real React components
+ * carry state through more than just `useState` — refs, navigation
+ * hooks, auth session hooks, effects all signal complexity that the
+ * old "stateHookCount" alone missed (taxonomy's MainNav was tagged
+ * "no local state" because it only used `usePathname`; alpha.1
+ * marked Editor.tsx easy despite a useRef-driven debounce).
+ *
+ * Returns the deduplicated list of hook names found. Conservative —
+ * we only pick up library hooks the analyzer specifically knows
+ * about. Unknown `useFoo` custom hooks get a separate signal entry
+ * so the FDE can decide whether to flag.
+ */
+const COMPLEXITY_HOOKS = new Set<string>([
+  "useRef",
+  "useEffect",
+  "useLayoutEffect",
+  "useImperativeHandle",
+  "useSession",       // next-auth
+  "useUser",          // common auth/session shape (clerk, custom)
+  "usePathname",      // next/navigation
+  "useSearchParams",  // next/navigation
+  "useRouter",        // next/navigation (and pages-router shape)
+  "useParams",        // next/navigation
+]);
+
+function detectComplexitySignals(fn: Node): string[] {
+  const found = new Set<string>();
+  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const calleeText = call.getExpression().getText();
+    // Last segment so `something.useThing` and `useThing` both match.
+    const leaf = calleeText.split(".").pop() ?? calleeText;
+    if (COMPLEXITY_HOOKS.has(leaf)) {
+      found.add(leaf);
+      continue;
+    }
+    // useCallback / useMemo with deps array length > 1 → signals
+    // co-coordinated state. Empty deps and single-dep are common
+    // and cheap; wider arrays indicate the component is wiring
+    // multiple values together.
+    if (leaf === "useCallback" || leaf === "useMemo") {
+      const args = call.getArguments();
+      const depsArg = args[1];
+      if (depsArg && Node.isArrayLiteralExpression(depsArg)) {
+        if (depsArg.getElements().length > 1) {
+          found.add(`${leaf}(deps>1)`);
+        }
+      }
+      continue;
+    }
+    // Unknown custom hook (`use*` not in our React + data-layer
+    // builtin set). Surface as a single signal entry — the FDE
+    // sees "uses custom hook" without us speculating about what
+    // it does.
+    if (/^use[A-Z]/.test(leaf) && !REACT_BUILTIN_HOOKS.has(leaf)) {
+      found.add("custom-hook");
+    }
+  }
+  return Array.from(found);
 }
 
 function analyzeProps(fn: Node): { count: number; complex: boolean } {
@@ -527,7 +1067,15 @@ function countStateHooks(fn: Node): number {
   let n = 0;
   for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
     const callee = call.getExpression().getText();
-    if (callee === "useState" || callee === "useReducer" || callee === "useRef") n++;
+    // Match both bare and namespaced calls: `useState`, `React.useState`,
+    // `R.useState` (e.g. `import * as R from "react"`). Real codebases
+    // mix both shapes — taxonomy's Editor uses `React.useRef`/
+    // `React.useEffect`/`React.useState` via `import * as React`. The
+    // leaf check is the same shape as detectComplexitySignals.
+    const leaf = callee.split(".").pop() ?? callee;
+    if (leaf === "useState" || leaf === "useReducer" || leaf === "useRef") {
+      n++;
+    }
   }
   return n;
 }
@@ -539,6 +1087,7 @@ function readFromSwrCall(call: CallExpression, file: string): RawRead | null {
   if (args.length === 0) return null;
   const urlNode = args[0];
   if (!urlNode) return null;
+  if (isAssetUrlExpression(urlNode)) return null;
   const urlPattern = urlNode.getText();
   const params = inferParamsFromUrl(urlNode);
   const returnShape = inferReturnTypeFromGenerics(call);
@@ -569,7 +1118,7 @@ function readFromUseQueryCall(call: CallExpression, file: string): RawRead | nul
       for (const c of initializer.getDescendantsOfKind(SyntaxKind.CallExpression)) {
         if (c.getExpression().getText() === "fetch") {
           const fetchArg = c.getArguments()[0];
-          if (fetchArg) {
+          if (fetchArg && !isAssetUrlExpression(fetchArg)) {
             urlPattern = fetchArg.getText();
             params = inferParamsFromUrl(fetchArg);
             break;
@@ -605,6 +1154,7 @@ function readFromFetchCall(call: CallExpression, file: string): RawRead | null {
   const args = call.getArguments();
   const urlNode = args[0];
   if (!urlNode) return null;
+  if (isAssetUrlExpression(urlNode)) return null;
   // Skip fetches inside useQuery's queryFn — those were already
   // captured by readFromUseQueryCall via the parent.
   if (isInsideUseQueryFn(call)) return null;
@@ -629,6 +1179,52 @@ function isInsideUseQueryFn(call: CallExpression): boolean {
   return false;
 }
 
+/**
+ * `new URL("...", import.meta.url)` is a bundler asset reference (webpack
+ * 5 / turbopack idiom for shipping fonts, images, workers). It looks like
+ * a URL but it's a build-time resolved path — never a data fetch. Treat
+ * any urlNode whose source text starts with `new URL(` AND mentions
+ * `import.meta.url` as an asset reference and reject the call entirely.
+ *
+ * Handles three shapes:
+ *   - `fetch(new URL(..., import.meta.url))` — node is the NewExpression directly.
+ *   - `const url = new URL(..., import.meta.url); fetch(url);` — node is an
+ *     Identifier; we look up its declaration in the same file and check
+ *     the initializer.
+ *   - `fetch(new URL(...).href)` — node is a PropertyAccess on a
+ *     NewExpression; we walk in and check.
+ */
+function isAssetUrlExpression(urlNode: Node): boolean {
+  if (isAssetUrlNew(urlNode)) return true;
+  // PropertyAccess on a NewExpression: `new URL(..., import.meta.url).href`.
+  if (Node.isPropertyAccessExpression(urlNode)) {
+    return isAssetUrlExpression(urlNode.getExpression());
+  }
+  // Identifier reference — follow to the declaration anywhere in the
+  // same source file. Most asset-URL idioms shape as
+  //   const url = new URL("...", import.meta.url);
+  //   fetch(url);
+  // so the declaration sits inside the same function scope. We walk
+  // descendants (not just top-level) to catch that.
+  if (Node.isIdentifier(urlNode)) {
+    const sf = urlNode.getSourceFile();
+    const name = urlNode.getText();
+    for (const v of sf.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+      if (v.getName() !== name) continue;
+      const init = v.getInitializer();
+      if (init && isAssetUrlExpression(init)) return true;
+    }
+  }
+  return false;
+}
+
+function isAssetUrlNew(urlNode: Node): boolean {
+  if (!Node.isNewExpression(urlNode)) return false;
+  const calleeName = urlNode.getExpression().getText();
+  if (calleeName !== "URL") return false;
+  return urlNode.getText().includes("import.meta.url");
+}
+
 // --- write extractors ------------------------------------------------------
 
 function writeFromFetchCall(call: CallExpression, file: string): RawWrite | null {
@@ -637,6 +1233,7 @@ function writeFromFetchCall(call: CallExpression, file: string): RawWrite | null
   const args = call.getArguments();
   const urlNode = args[0];
   if (!urlNode) return null;
+  if (isAssetUrlExpression(urlNode)) return null;
   const inputShape = inferFetchBodyShape(call);
   return {
     file,
@@ -757,63 +1354,123 @@ function getSnippet(node: Node): string {
 
 // --- ranking + grouping ----------------------------------------------------
 
-function urlPatternToAdapterId(urlPattern: string): string {
-  // Strip surrounding quotes, query strings, template-literal tick marks.
-  const stripped = urlPattern
-    .replace(/^["'`]|["'`]$/g, "")
-    .split("?")[0] ?? "";
-  // Drop /api/ or leading slash, split on /, replace template-slots with by-id.
-  const parts = stripped
-    .replace(/^\/api\//, "")
-    .replace(/^\//, "")
-    .split("/")
-    .filter(Boolean);
-  if (parts.length === 0) return "unknown.list";
-  // If the final segment is a parameter slot (`${...}` or `[id]` style),
-  // map to `<resource>.by-id`. If a non-param segment follows a param
-  // slot, treat it as a sub-action: `/api/deals/[id]/move-stage` →
-  // `deals.move-stage`.
-  const cleanedParts: string[] = [];
-  let lastWasParam = false;
-  for (const p of parts) {
-    if (p.startsWith("${") || p.startsWith("[")) {
-      lastWasParam = true;
-      continue;
+/**
+ * Tease an adapter/workflow id out of a URL pattern. Handles three shapes:
+ *
+ *   1. Relative API path: `/api/posts/${id}` → `{ resource: "posts", path: ["${id}"] }`.
+ *      The `/api/` prefix is dropped; templated slots stay marked.
+ *   2. Relative non-API path: `/users/${id}/stripe` → `{ resource: "users", path: ["${id}", "stripe"] }`.
+ *   3. Absolute URL: `https://api.github.com/repos/shadcn/taxonomy` →
+ *      `{ resource: "github", path: ["repos", ...] }` — host as namespace
+ *      (with the leading `api.` dropped), path verbatim.
+ *
+ * Template literals are first-class. The interpolation slot (`${expr}`)
+ * stays intact in the segment array — callers detect it via the
+ * leading `${` and drop it from the action leaf. Multiple
+ * interpolations work too: `/api/${tenant}/posts/${id}` → resource
+ * `posts` (the first non-templated segment), tail `[${id}]`. The
+ * leading templated segment is dropped from the resource lookup; the
+ * trailing one becomes a `by-id` slot.
+ *
+ * Returns null when the URL pattern is genuinely unstructured: tagged
+ * templates (`` sql`/api/posts` ``), opaque variable refs (`fetch(myUrl)`),
+ * `new URL(...)` constructions, or anything that doesn't start with a
+ * `/`-rooted path or `https?://`. Callers roll these into a single
+ * low-confidence `external.unparsable-url` bucket.
+ */
+type ParsedUrl = {
+  /** Source of the namespace: "path" (the URL was relative or rooted) vs "host" (absolute URL → host became namespace). */
+  readonly origin: "path" | "host";
+  readonly resource: string;
+  /** Remaining path segments after the resource, including templated slots. */
+  readonly tail: readonly string[];
+};
+
+function parseUrlPattern(urlPattern: string): ParsedUrl | null {
+  const stripped = (urlPattern.replace(/^["'`]|["'`]$/g, "").split("?")[0] ?? "").trim();
+  if (stripped.length === 0) return null;
+  // Reject patterns that don't start with a recognizable URL shape.
+  // `new URL(...)`, `someVar`, tagged templates, etc. land here.
+  const looksAbsolute = /^https?:\/\//.test(stripped);
+  const looksRelative = stripped.startsWith("/");
+  if (!looksAbsolute && !looksRelative) return null;
+
+  if (looksAbsolute) {
+    // Pull host + path out manually rather than via the URL constructor —
+    // the URL may contain `${...}` slots that the URL parser rejects.
+    const m = stripped.match(/^https?:\/\/([^/]+)(\/.*)?$/);
+    if (!m) return null;
+    const host = m[1] ?? "";
+    const path = m[2] ?? "";
+    // Host as namespace: drop `api.` prefix (api.github.com → github.com),
+    // keep the second-level domain as the namespace label.
+    const cleanHost = host.replace(/^api\./i, "");
+    const namespace = (cleanHost.split(".")[0] ?? "external")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-");
+    const segments = path.split("/").filter(Boolean);
+    if (segments.length === 0) {
+      return { origin: "host", resource: namespace || "external", tail: [] };
     }
-    cleanedParts.push(p);
-    lastWasParam = false;
+    // Use the host's namespace as resource; the remaining path becomes
+    // the action so e.g. `https://api.github.com/repos/...` → `github.repos`.
+    return {
+      origin: "host",
+      resource: namespace || "external",
+      tail: segments,
+    };
   }
-  if (cleanedParts.length === 0) return "unknown.list";
-  if (cleanedParts.length === 1) {
-    return `${cleanedParts[0]}.${lastWasParam ? "by-id" : "list"}`;
+
+  // Relative path. Strip `/api/` if present; treat the rest as resource+tail.
+  const path = stripped.replace(/^\/api\//, "").replace(/^\//, "");
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+  // The first NON-templated segment is the resource. Templated leading
+  // segments (rare) get rolled into the tail.
+  let resourceIdx = -1;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!;
+    if (!seg.startsWith("${") && !seg.startsWith("[")) {
+      resourceIdx = i;
+      break;
+    }
   }
-  // resource + sub-action, e.g. `deals.move-stage`
-  const resource = cleanedParts[0]!;
-  const action = cleanedParts.slice(1).join("-");
-  return `${resource}.${action}`;
+  if (resourceIdx === -1) return null;
+  return {
+    origin: "path",
+    resource: segments[resourceIdx]!,
+    tail: segments.slice(resourceIdx + 1),
+  };
 }
 
-function urlPatternToWorkflowId(urlPattern: string, method: string): string {
-  const stripped = urlPattern
-    .replace(/^["'`]|["'`]$/g, "")
-    .split("?")[0] ?? "";
-  const parts = stripped
-    .replace(/^\/api\//, "")
-    .replace(/^\//, "")
-    .split("/")
-    .filter(Boolean);
-  if (parts.length === 0) return "unknown.action";
-  const cleanedParts: string[] = [];
-  for (const p of parts) {
-    if (p.startsWith("${") || p.startsWith("[")) continue;
-    cleanedParts.push(p);
-  }
-  if (cleanedParts.length === 0) return "unknown.action";
-  const resource = cleanedParts[0]!;
-  const subAction = cleanedParts.slice(1).join("-");
-  if (subAction) {
+function urlPatternToAdapterId(urlPattern: string): string | null {
+  const parsed = parseUrlPattern(urlPattern);
+  if (!parsed) return null;
+  const { resource, tail } = parsed;
+  // Map tail to a clean leaf:
+  //   - no tail → list
+  //   - single templated segment → by-id
+  //   - non-templated segment(s) → join those (skipping templated slots)
+  const nonTemplated = tail.filter((s) => !s.startsWith("${") && !s.startsWith("["));
+  const hadTemplated = tail.length > nonTemplated.length;
+  if (tail.length === 0) return `${resource}.list`;
+  if (nonTemplated.length === 0) return `${resource}.by-id`;
+  // Join non-templated tail as the action, e.g.
+  //   /api/users/${id}/stripe → users.stripe
+  //   /api/deals/[id]/move-stage → deals.move-stage
+  // Drop templated slots from the leaf — they're params, not actions.
+  void hadTemplated;
+  return `${resource}.${nonTemplated.join("-")}`;
+}
+
+function urlPatternToWorkflowId(urlPattern: string, method: string): string | null {
+  const parsed = parseUrlPattern(urlPattern);
+  if (!parsed) return null;
+  const { resource, tail } = parsed;
+  const nonTemplated = tail.filter((s) => !s.startsWith("${") && !s.startsWith("["));
+  if (nonTemplated.length > 0) {
     // Explicit sub-action in the URL wins (e.g. `/api/tickets/[id]/reply` → `tickets.reply`).
-    return `${resource}.${subAction}`;
+    return `${resource}.${nonTemplated.join("-")}`;
   }
   // No sub-action → derive from method.
   switch (method.toUpperCase()) {
@@ -827,8 +1484,16 @@ function urlPatternToWorkflowId(urlPattern: string, method: string): string {
 
 function rankReadCandidates(reads: RawRead[]): ReadCandidate[] {
   const groups = new Map<string, RawRead[]>();
+  // Reads whose URL doesn't yield a sensible id (opaque variables,
+  // non-URL expressions). They surface as a single low-confidence
+  // bucket so the FDE sees them but isn't pushed to extract them.
+  const unparsable: RawRead[] = [];
   for (const r of reads) {
     const id = urlPatternToAdapterId(r.urlPattern);
+    if (id === null) {
+      unparsable.push(r);
+      continue;
+    }
     let arr = groups.get(id);
     if (!arr) {
       arr = [];
@@ -858,6 +1523,24 @@ function rankReadCandidates(reads: RawRead[]): ReadCandidate[] {
       usageCount: group.length,
       confidence,
       confidenceReason,
+    });
+  }
+  // Group every unparsable read into one low-confidence "URL pattern
+  // doesn't yield a clean adapter name" bucket. The FDE sees these as
+  // candidates but knows they need manual extraction. This is
+  // intentionally a single rolled-up entry — surfacing each call site
+  // as its own candidate would produce the alpha.1 noise (URL strings
+  // as adapter ids).
+  if (unparsable.length > 0) {
+    out.push({
+      suggestedAdapterId: "external.unparsable-url",
+      sourceLocations: unparsable.map((r) => ({ file: r.file, line: r.line, snippet: r.snippet })),
+      inferredParams: [],
+      inferredReturnShape: "unknown",
+      usageCount: unparsable.length,
+      confidence: "low",
+      confidenceReason:
+        "URL pattern doesn't yield a clean adapter name (likely a constructed URL, asset reference, or template tag). Consider extracting these manually after inspecting the call sites.",
     });
   }
   // Sort by usage descending, then alphabetical for stability.
@@ -898,8 +1581,13 @@ function scoreReadConfidence(
 
 function rankWriteCandidates(writes: RawWrite[]): WriteCandidate[] {
   const groups = new Map<string, RawWrite[]>();
+  const unparsable: RawWrite[] = [];
   for (const w of writes) {
     const id = urlPatternToWorkflowId(w.urlPattern, w.method);
+    if (id === null) {
+      unparsable.push(w);
+      continue;
+    }
     let arr = groups.get(id);
     if (!arr) {
       arr = [];
@@ -949,6 +1637,20 @@ function rankWriteCandidates(writes: RawWrite[]): WriteCandidate[] {
       confidenceReason,
     });
   }
+  if (unparsable.length > 0) {
+    out.push({
+      suggestedWorkflowId: "external.unparsable-url",
+      sourceLocations: unparsable.map((w) => ({ file: w.file, line: w.line, snippet: w.snippet })),
+      inferredInputShape: "unknown",
+      inferredSideEffects: Array.from(
+        new Set(unparsable.map((w) => `${w.method} (URL not statically resolvable)`)),
+      ),
+      usageCount: unparsable.length,
+      confidence: "low",
+      confidenceReason:
+        "URL pattern doesn't yield a clean workflow name (constructed URL, asset reference, or template tag). Inspect the call sites before extracting.",
+    });
+  }
   out.sort((a, b) => {
     if (b.usageCount !== a.usageCount) return b.usageCount - a.usageCount;
     return a.suggestedWorkflowId.localeCompare(b.suggestedWorkflowId);
@@ -965,14 +1667,19 @@ function buildComponentCandidates(
   readCandidates: ReadCandidate[],
   writeCandidates: WriteCandidate[],
 ): ComponentCandidate[] {
-  // Map url-pattern → adapter-id for cheap lookup.
+  // Map url-pattern → adapter-id for cheap lookup. Unparsable URLs map
+  // to the rolled-up "external.unparsable-url" bucket so a component
+  // that uses one still shows the dependency.
   const urlToAdapterId = new Map<string, string>();
   for (const r of allReads) {
-    urlToAdapterId.set(r.urlPattern + "|read", urlPatternToAdapterId(r.urlPattern));
+    urlToAdapterId.set(r.urlPattern + "|read", urlPatternToAdapterId(r.urlPattern) ?? "external.unparsable-url");
   }
   const urlToWorkflowId = new Map<string, string>();
   for (const w of allWrites) {
-    urlToWorkflowId.set(w.urlPattern + "|" + w.method, urlPatternToWorkflowId(w.urlPattern, w.method));
+    urlToWorkflowId.set(
+      w.urlPattern + "|" + w.method,
+      urlPatternToWorkflowId(w.urlPattern, w.method) ?? "external.unparsable-url",
+    );
   }
 
   return components
@@ -981,14 +1688,14 @@ function buildComponentCandidates(
         new Set(
           allReads
             .filter((r) => r.file === c.file && r.line >= c.startLine && r.line <= c.endLine)
-            .map((r) => urlPatternToAdapterId(r.urlPattern)),
+            .map((r) => urlPatternToAdapterId(r.urlPattern) ?? "external.unparsable-url"),
         ),
       );
       const consumesWrites = Array.from(
         new Set(
           allWrites
             .filter((w) => w.file === c.file && w.line >= c.startLine && w.line <= c.endLine)
-            .map((w) => urlPatternToWorkflowId(w.urlPattern, w.method)),
+            .map((w) => urlPatternToWorkflowId(w.urlPattern, w.method) ?? "external.unparsable-url"),
         ),
       );
       const { difficulty, reasons } = scoreDifficulty(c, consumesReads, consumesWrites);
@@ -998,7 +1705,7 @@ function buildComponentCandidates(
         componentName: c.componentName,
         consumesReads,
         consumesWrites,
-        hasLocalState: c.stateHookCount > 0,
+        hasLocalState: c.stateHookCount > 0 || c.complexitySignals.length > 0,
         hasComplexProps: c.hasComplexProps,
         extractionDifficulty: difficulty,
         difficultyReasons: reasons,
@@ -1007,6 +1714,7 @@ function buildComponentCandidates(
           locOfComponent: c.loc,
           stateHookCount: c.stateHookCount,
           propCount: c.propCount,
+          detectedComplexitySignals: c.complexitySignals,
         },
       };
     })
@@ -1067,10 +1775,23 @@ function scoreDifficulty(
   } else {
     reasons.push(`simple props (${c.propCount} field${c.propCount === 1 ? "" : "s"})`);
   }
+  if (c.complexitySignals.length > 0) {
+    reasons.push(`uses ${c.complexitySignals.join(", ")}`);
+  }
   let difficulty: Difficulty;
   if (score >= 5) difficulty = "hard";
   else if (score >= 2) difficulty = "medium";
   else difficulty = "easy";
+  // Complexity signals bump difficulty one level. Captures real
+  // React patterns that aren't useState (refs for debouncing,
+  // navigation hooks for active-route highlighting, session hooks
+  // for auth-gated branches, effects coordinating multiple values).
+  // The bump is conservative — capped at "hard" so a tiny component
+  // with one useRef doesn't jump easy → hard.
+  if (c.complexitySignals.length > 0) {
+    if (difficulty === "easy") difficulty = "medium";
+    else if (difficulty === "medium") difficulty = "hard";
+  }
   return { difficulty, reasons };
 }
 

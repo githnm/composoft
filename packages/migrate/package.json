@@ -1,6 +1,6 @@
 {
   "name": "@composoft/migrate",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.4",
   "description": "Static analyzer + interactive walkthrough that scopes a composoft migration from an existing React/Next.js codebase. v0 of the migration story; future iterations add the block extractor and embeddable runtime.",
   "license": "MIT",
   "author": "Hoshang Mehta",
