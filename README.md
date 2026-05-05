@@ -12,6 +12,8 @@ composoft replaces hand-edits with composition. You define a typed library of bl
 
 ## demo
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/b-6pQLeG_Ak?si=iVLmlTiGWSOOEfzP" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
 https://youtu.be/b-6pQLeG_Ak?si=hTDwu-xzf5N28hCY
 
 Same registry. Two customer briefs. Two genuinely different apps.
