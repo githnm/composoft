@@ -6,7 +6,7 @@ Per-customer software from a typed primitive registry
 
 ## What this is
 
-We've been shipping software as an end-to-end product with a fixed UI, customers with different ways of working have to adapt to how the software is set to work. Composoft flips this - software that composes itself to fit how the customer already works - from a natural language brief - keeping key decision decisions, it's orginal form and pritives intact.
+We've been shipping software as an end-to-end product with a fixed UI, customers with different ways of working have to adapt to how the software is set to work. Composoft flips this - software that composes itself to fit how the customer already works - from a natural language brief - keeping key decision decisions, it's orginal form and primitives intact.
 
 Composoft draws a hard boundary: developers ship stable, typed primitives; AI only composes them per customer, from a natural language brief.
 
